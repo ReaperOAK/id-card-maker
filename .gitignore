@@ -2,6 +2,11 @@ node_modules/
 dist/
 target/
 .remember/
+.superpowers/
 template.pdf
 *.pdf
+!fixtures/*.pdf
 !docs/**/*.pdf
+# fixtures/ is whitelisted above so template.pdf and template-noisy.pdf commit;
+# a real school template must never be added there — it carries student photos.
+out/
