@@ -54,6 +54,16 @@ describe('fitText', () => {
     const r = fitText('LAKSHMI PRIYADARSHINI VENKATARAGHAVAN', style(), 20, arial)
     expect(r.overflow).toBe(true)
     expect(r.size).toBe(6)
+    // At boxWidth 20 the hard-break fallback finds the maximal prefix that still
+    // FITS ("LAKSH", ~19.7pt) — by construction that never exceeds the box, since
+    // the whole point of the hard-break search is to stop shrinking once a prefix
+    // fits. A returned line only genuinely exceeds the box in the narrower case
+    // below, where the box is smaller than even one glyph and the cut-floor-of-1
+    // guarantee (see wrap()'s hard-break comment) forces a character through
+    // regardless of whether it fits.
+    const tiny = fitText('LAKSHMI PRIYADARSHINI VENKATARAGHAVAN', style(), 2, arial)
+    expect(tiny.overflow).toBe(true)
+    expect(arial.widthOfTextAtSize(tiny.lines[0]!, tiny.size)).toBeGreaterThan(2)
   })
 
   it('wraps an address across two lines with the first line indented', () => {
@@ -66,6 +76,48 @@ describe('fitText', () => {
 
   it('breaks a single unbreakable token rather than looping forever', () => {
     const r = fitText('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', style({ maxLines: 2 }), 30, arial)
+    expect(r.lines.length).toBeGreaterThan(0)
+    expect(r.lines.length).toBeLessThanOrEqual(2)
+  })
+
+  it('wraps at the design size without shrinking when fit is wrap', () => {
+    const wrapped = fitText('LAKSHMI PRIYADARSHINI VENKATARAGHAVAN', style({ fit: 'wrap' }), 112.5, arial)
+    expect(wrapped.size).toBe(9)
+    expect(wrapped.overflow).toBe(true)
+
+    const shrunk = fitText('LAKSHMI PRIYADARSHINI VENKATARAGHAVAN', style({ fit: 'shrink' }), 112.5, arial)
+    expect(shrunk.size).toBeLessThan(9)
+  })
+})
+
+describe('fitText termination', () => {
+  it('returns rather than hanging when the line is narrower than one character', () => {
+    const r = fitText('AAAA', style({ maxLines: 2 }), 0.5, arial)
+    expect(r.overflow).toBe(true)
+    expect(r.lines.length).toBeGreaterThan(0)
+  })
+
+  it('returns rather than throwing for a non-positive box', () => {
+    for (const w of [0, -5]) {
+      const r = fitText('AB CD', style({ maxLines: 3 }), w, arial)
+      expect(r.overflow).toBe(true)
+      expect(r.lines.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('handles a single word wider than the whole line on one line', () => {
+    const r = fitText('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', style({ maxLines: 1 }), 20, arial)
+    expect(r.overflow).toBe(true)
+    expect(r.lines).toHaveLength(1)
+  })
+
+  it('handles empty and whitespace-only input without overflowing', () => {
+    expect(fitText('', style(), 100, arial).overflow).toBe(false)
+    expect(fitText('   ', style(), 100, arial).overflow).toBe(false)
+  })
+
+  it('handles a first-line indent wider than the box', () => {
+    const r = fitText('Hello world', style({ maxLines: 2, firstLineIndent: 200 }), 100, arial)
     expect(r.lines.length).toBeGreaterThan(0)
     expect(r.lines.length).toBeLessThanOrEqual(2)
   })

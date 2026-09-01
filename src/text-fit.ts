@@ -20,7 +20,7 @@ function wrap(text: string, font: PDFFont, size: number, widths: number[], maxLi
   const widthFor = (i: number) => widths[Math.min(i, widths.length - 1)] ?? 0
 
   for (let w = 0; w < words.length; w++) {
-    let word = words[w]!
+    const word = words[w]!
     const candidate = current === '' ? word : `${current} ${word}`
     if (font.widthOfTextAtSize(candidate, size) <= widthFor(lines.length)) {
       current = candidate
@@ -63,10 +63,23 @@ export function fitText(text: string, style: TextStyle, boxWidth: number, font: 
   const trimmed = text.trim()
   if (trimmed === '') return { lines: [''], size: style.size, overflow: false }
 
+  // A non-positive box cannot fit anything. Return through the overflow path
+  // rather than letting wrap() spin on a negative width budget.
+  if (boxWidth <= 0) {
+    return { lines: [trimmed], size: style.minSize, overflow: true }
+  }
+
   const widths = style.firstLineIndent > 0 ? [boxWidth - style.firstLineIndent, boxWidth] : [boxWidth]
 
   if (style.fit === 'clip') {
     return { lines: [trimmed], size: style.size, overflow: font.widthOfTextAtSize(trimmed, style.size) > boxWidth }
+  }
+
+  if (style.fit === 'wrap') {
+    const lines = wrap(trimmed, font, style.size, widths, style.maxLines)
+    if (lines) return { lines, size: style.size, overflow: false }
+    const all = wrap(trimmed, font, style.size, widths, Number.MAX_SAFE_INTEGER) ?? [trimmed]
+    return { lines: all.slice(0, style.maxLines), size: style.size, overflow: true }
   }
 
   for (let size = style.size; size >= style.minSize - 1e-9; size -= STEP) {
