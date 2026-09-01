@@ -31,4 +31,16 @@ describe('detectTrim', () => {
     expect(Math.abs(trim.x - (288 - trim.x - trim.w))).toBeLessThan(1)
     expect(Math.abs(trim.y - (216 - trim.y - trim.h))).toBeLessThan(1)
   })
+
+  it('measures y from the top of the page, not the bottom', async () => {
+    // This fixture's card is deliberately off-centre: its top edge sits 12pt from
+    // the top of the page, 48.955pt from the bottom. The centred fixture cannot
+    // tell those apart, so only this one catches a Y-flip in detectTrim.
+    const offcentre = new Uint8Array(readFileSync('fixtures/template-offcenter.pdf'))
+    const trim = await detectTrim(offcentre, { dpi: 300 })
+    expect(Math.abs(trim.y - 12.0)).toBeLessThan(1)
+    expect(Math.abs(trim.x - 24.854)).toBeLessThan(1)
+    expect(Math.abs(trim.w - 238.296)).toBeLessThan(1)
+    expect(Math.abs(trim.h - 155.045)).toBeLessThan(1)
+  })
 })
