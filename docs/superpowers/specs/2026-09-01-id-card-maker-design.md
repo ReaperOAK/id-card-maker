@@ -7,7 +7,7 @@
 
 ## 1. Problem
 
-A print shop produces school ID cards. Current workflow, entirely manual in CorelDRAW X3 (v13, 2006):
+A print shop produces school ID cards. Current workflow, entirely manual in CorelDRAW 12 (2003):
 
 1. Design one card template in CorelDRAW.
 2. Copy-paste it 25 times into a 5x5 grid on an 18x12 inch sheet.
@@ -15,12 +15,12 @@ A print shop produces school ID cards. Current workflow, entirely manual in Core
 4. Place each student's photo by hand.
 5. Print, cut, deliver.
 
-Volume is roughly 1000 students per school. The two dominant time sinks, confirmed with the operator, are **photo handling** and **manual text entry**. CorelDRAW X3's Print Merge cannot merge variable images at all, which is precisely why the existing tooling does not solve this.
+Volume is roughly 1000 students per school. The two dominant time sinks, confirmed with the operator, are **photo handling** and **manual text entry**. CorelDRAW 12's Print Merge cannot merge variable images at all, which is precisely why the existing tooling does not solve this.
 
 ## 2. Goals
 
 - Eliminate per-student manual data entry and photo placement.
-- Produce print-ready, vector-quality PDFs imposed onto an 18x12 inch sheet.
+- Produce print-ready PDFs imposed onto an 18x12 inch sheet, preserving whatever fidelity the source template carries and adding no degradation of its own.
 - Support duplex cards with correct front/back registration.
 - Work with templates the developer has never seen, so the tool is sellable beyond the first shop.
 - Handle 1000 students, duplex, in under 3 minutes end to end.
@@ -43,21 +43,38 @@ Deliberately excluded. The architecture leaves seams for these; the features are
 
 A VBA/GMS macro inside CorelDRAW was considered and rejected.
 
-- CorelDRAW X3 is 32-bit with a ~2GB memory ceiling. Placing 1000 photos inside the application will crawl and very likely crash mid-job.
+- CorelDRAW 12 is 32-bit with a ~2GB memory ceiling. Placing 1000 photos inside the application will crawl and very likely crash mid-job.
 - VBA 6 on 2006-era software is a poor development and debugging environment.
 - It is unsellable: every customer would need CorelDRAW, and the macro would break across versions.
 
 ### 4.2 Template ingestion: PDF background plus overlay (approach A), with placeholder auto-detection layered on (approach C)
 
-The template arrives as a **PDF exported from any design tool**. CorelDRAW X3's SVG export is unreliable (SVG 1.1, degrades text-on-path, transparency, PowerClip, lens effects); its PDF export preserves true vectors and embeds fonts. PDF is therefore the ingestion format, and the source design tool becomes irrelevant to the application.
+The template arrives as a **PDF exported from any design tool**. CorelDRAW 12's SVG export is unreliable (degrades text-on-path, transparency, PowerClip, lens effects); its PDF export embeds fonts and preserves vector geometry for vector objects. PDF is therefore the ingestion format, and the source design tool becomes irrelevant to the application.
 
 **Approach A (base):** the PDF page is the card's static art layer. The user drags text and photo boxes on top of it in the app, binding each to an Excel column.
 
 **Approach C (layered on):** on template load, scan the PDF's text objects for `{{token}}` patterns. Each hit auto-creates a text element with position, font, size and colour lifted from the PDF, pre-bound to the matching Excel column by name. Detection failures fall back to A's manual editing; the data model and editor are identical in both paths.
 
-Photo frames are always drawn manually. PDF has no reliable way to mark a rectangle as a photo slot.
+**Photo frames are proposed automatically.** Image XObject placements are extracted from the content stream and ranked as photo-slot candidates by portrait aspect ratio and area; the user confirms or overrides. Manual drawing remains available when no placed image exists.
 
-**Verification required before implementation:** export one card from CorelDRAW X3 as PDF and confirm vectors, embedded fonts, and correct page dimensions. The X3 behaviour described here is from knowledge of the product, not tested.
+**Trim box detection.** The PDF page is not the card. The application computes the artwork's ink bounding box, subtracts half the border stroke width where a border path is identified, and presents the result as the trim rectangle for the user to confirm or type over. All imposition works from the trim box, never the page box.
+
+**Text extraction uses pdf.js, not a hand-written content-stream parser.** Embedded fonts may carry no ToUnicode CMap, in which case glyph codes decode only by reverse-engineering the embedded CFF program. pdf.js `getTextContent()` already does this; `getOperatorList()` supplies fill colour. Hand-parsing the content stream would work on some templates and silently fail on others.
+
+### 4.3 Verification against a real template
+
+A production template (`template.pdf`, Adarsha Balika Vidyalaya) was measured on 2026-09-01. Full measurements are in Appendix A. Outcome:
+
+| Assumption | Result |
+|---|---|
+| CorelDRAW 13 | Corel 12. PDF 1.3, Corel PDF Engine 1.0.0.458 |
+| Fonts embedded | Confirmed. Five faces, CID Type 0C, Identity-H |
+| PDF export preserves vectors | Partly. Logo and signature are vector; header band and two panels are 200dpi JPEGs |
+| Page box equals card | False. Page 288x216pt, artwork 238.30x155.05pt, centred |
+| Template is CMYK | False. RGB throughout, with no pure black anywhere |
+| 5x5 on an 18x12 sheet | Confirmed against the trim size |
+
+The two false assumptions produced the trim-box requirement above and the colour rule in 8.4. The partial-vector result means output quality for this template is capped at 200dpi in its raster regions, matching current production rather than improving on it. This must not be described as lossless.
 
 ## 5. Architecture
 
@@ -82,7 +99,7 @@ Photo frames are always drawn manually. PDF has no reliable way to mark a rectan
 
 Rejected alternatives: a web app (1000 local photos should not cross a network), and Electron (ships a browser runtime that provides no value here).
 
-**PDF assembly:** pdf-lib's `embedPage` embeds the card PDF as a **single reusable XObject**, referenced once per card position. The vector art is stored once, not 1000 times. Output stays small and stays vector. Text and photos draw as a thin overlay on top of each stamp.
+**PDF assembly:** pdf-lib's `embedPage` embeds the card PDF as a **single reusable XObject**, referenced once per card position. The card art is stored once, not 1000 times, and passes through byte-identical: vector objects stay vector, raster objects keep their original resolution, and nothing is re-encoded. Output stays small. Text and photos draw as a thin overlay on top of each stamp.
 
 **Excel:** `calamine` in Rust, not SheetJS. SheetJS's npm package is stale and its distribution has moved off the registry, which is unwanted supply-chain risk in a product intended for sale. calamine reads both `.xlsx` and `.xls`; legacy `.xls` support matters for this customer base.
 
@@ -102,7 +119,7 @@ Sunrise School 2026/
 
 One app-level `library.json` records each school's template path, field mapping, card size and photo-naming convention, so a returning school is a matter of dropping in a new spreadsheet. No database: a folder can be copied to a pendrive and backed up trivially, and SQLite would buy query power this workload does not need.
 
-**Known setup risk:** overlay text requires the actual font file on disk to embed. Fonts bundled with CorelDRAW X3 must be located as `.ttf`/`.otf`. This is the most likely first-run obstacle.
+**Known setup risk:** overlay text requires the actual font file on disk to embed. Fonts bundled with CorelDRAW must be located as `.ttf`/`.otf`. This is the most likely first-run obstacle.
 
 ## 6. Template editor and layout model
 
@@ -145,18 +162,24 @@ type Binding = {
 type TextStyle = {
   fontFile: string
   size: number
-  color: CMYK            // CMYK, not hex. See 8.4.
+  color: Colour          // device colour, see 8.4
   align: 'left' | 'center' | 'right'
   valign: 'top' | 'middle' | 'bottom'
   fit: 'shrink' | 'clip' | 'wrap'
   minSize: number
   lineHeight: number
+  firstLineIndent: number   // points; 0 for most fields
 }
 
-type CMYK = { c: number; m: number; y: number; k: number }   // each 0..1
+type Colour =
+  | { space: 'rgb';  r: number; g: number; b: number }        // each 0..1
+  | { space: 'cmyk'; c: number; m: number; y: number; k: number }
+  | { space: 'gray'; k: number }
 ```
 
 **`fit: 'shrink'` is a correctness feature, not a convenience.** "Om Jha" and "Lakshmi Priyadarshini Venkataraghavan" occupy the same box. Behaviour: shrink toward `minSize` to fit the box width; below that, wrap; if it still does not fit, **fail the card into preflight**. Silent overflow on card 700 of 1000 is discovered only after cutting.
+
+**`firstLineIndent` exists for wrapped fields that begin beside their label.** In the reference template the address runs two lines: line one starts after "Address :" at x=63.37, line two returns to the left margin at x=26.77. This is one text box of width 162.59 with a 36.60pt first-line indent, not two hand-split fields. Splitting it manually would push the wrap decision onto the operator for every student.
 
 **Back side:** a second tab with its own PDF and its own elements. Front-only schools leave it empty.
 
@@ -183,12 +206,14 @@ Clamped to image bounds. If the head cannot be framed without running out of pix
 
 | Check | Rule |
 |---|---|
-| Resolution | cropped region must reach >=300dpi at printed size |
+| Resolution | cropped region measured against the template's target DPI (see below) |
 | Blur | variance-of-Laplacian below threshold |
 | Faces found | 0 -> manual crop required; 2+ -> largest chosen, flagged |
 | Exposure | clipped highlights or crushed shadows |
 
-The resolution gate is the sharpest. A 0.9-inch photo frame at 300dpi needs >=270px in the **cropped** region, which a wide classroom photo cropped to one face will not deliver.
+**DPI thresholds are calibrated to real production, not to the 300dpi ideal.** The reference template's photo frame is 0.664 x 0.869 inches and its embedded photo is 132x172px, an effective 199ppi. A flat 300dpi gate would flag every photo currently in use and train the operator to ignore the warning, which is worse than having no gate.
+
+Rules: warn below 300dpi, block below 150dpi, with the target DPI a per-template setting defaulting to 200. A warning nobody can act on is noise, and noise is what makes real warnings invisible.
 
 **7.6 Review contact sheet.** Every crop shown in a grid, flagged items sorted first. Drag to re-centre, scroll to zoom. The pipeline's purpose is to make 950 crops correct so the operator only touches 50; it is not to remove human review.
 
@@ -221,15 +246,25 @@ Row order is unchanged. A short-edge flip mirrors rows instead of columns, so fl
 
 ### 8.3 Gutter and marks
 
-Default gutter 3mm with crop marks placed in the gutter: two cuts per line, the sliver discarded, no neighbour bleed contaminating a card edge. The current school's geometry affords this: five CR80-width cards (3.375in each) span 16.875 inches of the 18-inch sheet, leaving 1.125 inches for margins and four gutters. Other card sizes yield different slack, so the solver reduces the gutter toward the butt-cut case when a size does not leave room for the default. Butt-cut (gutter 0) remains selectable, with its trade-off stated in the UI.
+Default gutter 3mm with crop marks placed in the gutter: two cuts per line, the sliver discarded, no neighbour artwork contaminating a card edge. The reference template affords this comfortably, with 104.5pt of horizontal and 88.8pt of vertical slack after a 5x5 layout (Appendix A). Other card sizes yield different slack, so the solver reduces the gutter toward the butt-cut case when a size does not leave room for the default. Butt-cut (gutter 0) remains selectable, with its trade-off stated in the UI.
+
+**Bleed defaults to zero, deliberately.** The operator cuts strictly on the printed border and leaves no surrounding space. The reference template carries no bleed, so any outward drift of the blade leaves a white sliver on the card edge. This is the established practice of a shop that has run this workflow for years, and the tool follows it rather than fighting it. Bleed is a per-template setting, available for operators who want it, defaulting to 0.
+
+Because there is no bleed, a positive gutter is the safer default: each cut is aimed independently at one card's own border, so blade drift damages one edge rather than two. Butt-cut halves the number of cuts and doubles the blast radius of a drifting blade.
 
 **Sheet slug**, printed outside the trim area: job name, `Sheet 7 of 40`, `FRONT` or `BACK`, timestamp. On a 40-sheet duplex job, unlabelled sheets get mixed up, and one misplaced back sheet ruins 25 cards.
 
 ### 8.4 Colour space
 
-The template PDF from CorelDRAW is likely CMYK and passes through untouched inside the embedded XObject. Overlay text, however, would default to RGB, and `rgb(0,0,0)` converts at the RIP to four-colour rich black: muddy, with registration fringing on small text.
+The template's colour space is whatever the source tool produced and must not be assumed. The reference template is **RGB throughout**, with no CMYK operator and no pure black anywhere; its labels are navy `rgb(0.16, 0.09, 0.44)`. An earlier assumption that CorelDRAW output would be CMYK was wrong.
 
-Overlay text therefore draws **K-only**, via pdf-lib's `cmyk(0, 0, 0, 1)`. `TextStyle.color` carries CMYK rather than hex for this reason. Photos remain RGB JPEG; RIP conversion handles those acceptably.
+Rules:
+
+1. Overlay colour defaults to the colour detected on the corresponding placeholder text, in its original space. Matching the template beats imposing a house convention.
+2. Where a template does use CMYK, pure-black overlay text draws **K-only** (`cmyk(0, 0, 0, 1)`), never `rgb(0, 0, 0)`. RGB black converts at the RIP into four-colour rich black: muddy, with registration fringing on small text. This case does not arise in the reference template, but will arise the first time a template is exported from a print-oriented tool.
+3. `TextStyle.color` therefore carries a tagged `Colour`, not a hex string, so the space survives the round trip.
+
+Photos remain RGB JPEG; RIP conversion handles those acceptably.
 
 ### 8.5 Output
 
@@ -248,7 +283,7 @@ Cards ready                     961
 X Missing photo                  12   BLOCK
 X Duplicate roll number           2   BLOCK
 X Required field empty            5   BLOCK
-! Photo below 300dpi             14   warn
+! Photo below target DPI         14   warn
 ! Name shrunk past 6pt            6   warn
 ! Face not detected               9   warn
 ------------------------------------                    [ Generate ]  blocked
@@ -261,7 +296,7 @@ Every row drills into the exact student list. Blocking items must be resolved or
 | Photo file missing | block | list students; override prints placeholder |
 | Duplicate ID | block | otherwise two cards for one student, or a swapped photo |
 | Required bound field empty | block | unless the binding defines a `fallback` |
-| Photo below print DPI | warn | shows actual vs required |
+| Photo below target DPI | warn | shows actual vs target; blocks below 150dpi |
 | Text will not fit at `minSize` | warn | preview shows the offending card |
 | Font file not found | block | cannot embed, cannot render |
 | Template PDF encrypted or empty | block | fails at load, not at generate |
@@ -284,3 +319,76 @@ Without this, a 14-card correction means re-running 40 sheets or hand-assembling
 ## 12. Performance target
 
 1000 students, duplex, end to end in under 3 minutes on the operator's Windows machine. Photo processing dominates; PDF assembly should complete in seconds.
+
+
+---
+
+## Appendix A: Reference template measurements
+
+Source: `template.pdf`, Adarsha Balika Vidyalaya school ID. Measured 2026-09-01 with poppler and Ghostscript. These numbers are the fixture for the golden PDF tests in section 11.
+
+**Document**
+
+| Property | Value |
+|---|---|
+| Producer | Corel PDF Engine 1.0.0.458, CorelDRAW 12 |
+| PDF version | 1.3 |
+| Page box | 288 x 216pt (4.000 x 3.000in) |
+| Ink bounding box | 24.854, 30.477 to 263.150, 185.523 (PDF origin) |
+| Trim size | 238.296 x 155.045pt = 3.3097 x 2.1534in |
+| Card position | centred on the page: 24.85pt left/right, 30.48pt top/bottom |
+| Colour space | RGB only |
+| Bleed | none |
+
+**Fonts** — all embedded, CID Type 0C, Identity-H, no ToUnicode CMap.
+
+| Face | Role | Size |
+|---|---|---|
+| TimesNewRomanPSMT,Bold | field labels | 9pt |
+| ArialMT | field values | 9pt |
+| TimesNewRomanPSMT | address block, e-mail | 9-10pt |
+| TimesNewRomanPSMT,BoldItalic | "Estd : 1969" | 8.741pt |
+| MonotypeCorsiva,Italic | school name | 18pt |
+
+Both value and label faces are Windows stock, so the font-availability risk noted in section 5 is low for this template.
+
+**Field boxes** — page coordinates, top-left origin, points. Subtract (24.85, 30.48) for trim-relative coordinates.
+
+| Field | x | y | width | operator's budget |
+|---|---:|---:|---:|---:|
+| ID No. | 59.77 | 94.09 | 58.50 | 13 chars |
+| Name | 59.01 | 104.65 | 112.50 | 25 chars |
+| Guardian's Name | 102.69 | 115.21 | 108.00 | 24 chars |
+| Class | 59.27 | 125.76 | 18.00 | 4 chars |
+| R.No. | 118.02 | 125.76 | 13.50 | 3 chars |
+| DOB | 60.52 | 136.32 | 45.00 | 10 chars |
+| Blood Group | 169.87 | 136.32 | 13.50 | 3 chars |
+| Contact No. | 80.26 | 146.87 | 54.00 | 12 chars |
+| Address | 26.77 | 157.43 | 162.59 | 28 + 27 chars, 2 lines, indent 36.60 |
+
+The operator expressed each budget as a run of `x` characters in the template. Every `x` measures exactly 4.50pt (Arial 9pt, 0.5em), and line advance is 10.555pt.
+
+**The budget is points, not characters.** Lowercase `x` sits at roughly the average glyph width, so 25 of them approximate 25 mixed-case characters. Capitals in Arial average about 0.68em, so the Name box holds only about 18 upper-case characters. Schools that submit names in capitals will exercise shrink-to-fit heavily, and the preflight warning threshold should be set with that in mind.
+
+**Placed images**
+
+| Object | x | y | w | h | aspect | role |
+|---|---:|---:|---:|---:|---:|---|
+| Im26 | 71.47 | 11.50 | 191.57 | 58.23 | 3.290 | header band, 200ppi JPEG |
+| Im27 | 167.77 | 59.13 | 94.18 | 29.11 | 3.235 | panel, 200ppi JPEG |
+| Im46 | 215.26 | 92.23 | 47.78 | 62.53 | 0.764 | **photo slot** |
+
+`Im46` is the photo frame: 0.664 x 0.869in, holding a 132x172px image at an effective 199ppi. Its portrait aspect and modest area are what the photo-slot detector in 4.2 ranks on.
+
+**Sheet fit, 18 x 12in (1296 x 864pt)**
+
+| Orientation | Columns | Rows | Cards | Slack |
+|---|---:|---:|---:|---|
+| As designed | 5 | 5 | **25** | 104.5pt horizontal, 88.8pt vertical |
+| Rotated 90 degrees | 8 | 3 | 24 | 55.6pt horizontal, 149.1pt vertical |
+
+The as-designed orientation wins and reproduces the operator's existing 5x5 layout exactly. The solver still evaluates both, because for other card sizes rotation can win outright.
+
+With a 3mm gutter: side margins 0.49in, top and bottom margins 0.38in. Comfortable.
+
+**Privacy note:** the reference template contains a real student's photograph. It must be replaced with a synthetic placeholder before this file is committed to any repository or shipped as a sample.
