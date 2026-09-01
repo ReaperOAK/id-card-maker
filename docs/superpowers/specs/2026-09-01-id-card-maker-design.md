@@ -59,7 +59,7 @@ The template arrives as a **PDF exported from any design tool**. CorelDRAW 12's 
 
 **Trim box detection.** The PDF page is not the card. The application computes the artwork's ink bounding box, subtracts half the border stroke width where a border path is identified, and presents the result as the trim rectangle for the user to confirm or type over. All imposition works from the trim box, never the page box.
 
-**Text extraction uses pdf.js, not a hand-written content-stream parser.** Embedded fonts may carry no ToUnicode CMap, in which case glyph codes decode only by reverse-engineering the embedded CFF program. pdf.js `getTextContent()` already does this; `getOperatorList()` supplies fill colour. Hand-parsing the content stream would work on some templates and silently fail on others.
+**Text extraction uses a real PDF engine, never a hand-written content-stream parser.** Embedded fonts may carry no ToUnicode CMap, in which case glyph codes decode only by reverse-engineering the embedded CFF program. Hand-parsing would work on some templates and silently fail on others. The chosen engine is MuPDF (WASM): one dependency serves rasterization, trim detection and structured text extraction, with no native build step on Windows.
 
 ### 4.3 Verification against a real template
 
