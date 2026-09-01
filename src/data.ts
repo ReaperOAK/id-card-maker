@@ -12,16 +12,20 @@ export interface Row {
  */
 export function normaliseId(raw: string): string {
   const cleaned = raw.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
-  const stripped = cleaned.replace(/\d+/g, (match) => {
-    const stripped = match.replace(/^0+/, '')
-    return stripped === '' ? '0' : stripped
-  })
-  return stripped === '' ? '0' : stripped
+  if (cleaned === '') return ''
+  // Strip leading zeros at the start of each digit run: 0101 -> 101, adm007 -> adm7.
+  // An id that is all zeros collapses to a single 0 rather than to nothing, so it
+  // stays distinguishable from a genuinely missing id.
+  return cleaned.replace(/(^|[a-z])0+(\d)/g, '$1$2')
 }
 
 /** Curly apostrophes and stray whitespace are the usual header mismatches. */
 export function normaliseHeader(raw: string): string {
-  return raw.replace(/'/g, "'").replace(/\s+/g, ' ').trim()
+  // \u2018 = LEFT SINGLE QUOTATION MARK, \u2019 = RIGHT SINGLE QUOTATION MARK.
+  // Written as escapes (not literal characters) so an editor or copy/paste
+  // cannot silently flatten them to ASCII apostrophes, which would turn
+  // this fold into a no-op.
+  return raw.replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ').trim()
 }
 
 function cellText(value: ExcelJS.CellValue): string {
@@ -35,7 +39,10 @@ function cellText(value: ExcelJS.CellValue): string {
     const v = value as { richText?: { text: string }[]; text?: string; result?: unknown }
     if (v.richText) return v.richText.map((t) => t.text).join('')
     if (typeof v.text === 'string') return v.text
-    if (v.result !== undefined) return String(v.result)
+    if (v.result !== undefined) {
+      if (typeof v.result === 'object' && v.result !== null && 'error' in v.result) return ''
+      return String(v.result)
+    }
     return ''
   }
   return String(value).trim()

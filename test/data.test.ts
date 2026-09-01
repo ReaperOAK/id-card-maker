@@ -13,11 +13,22 @@ describe('normaliseId', () => {
     expect(normaliseId('0')).toBe('0')
     expect(normaliseId('000')).toBe('0')
   })
+
+  it('returns an empty string for a missing id, distinct from an id of zero', () => {
+    expect(normaliseId('')).toBe('')
+    expect(normaliseId('   ')).toBe('')
+    expect(normaliseId('---')).toBe('')
+    // A real id of zero must NOT look like a missing one.
+    expect(normaliseId('0')).toBe('0')
+  })
 })
 
 describe('normaliseHeader', () => {
-  it('collapses whitespace and trims', () => {
-    expect(normaliseHeader("  Guardian's   Name ")).toBe("Guardian's Name")
+  it('folds curly apostrophes and collapses whitespace', () => {
+    // \u2019 is the curly apostrophe real spreadsheets carry; written as an
+    // escape so it cannot be flattened to an ASCII quote by an editor.
+    expect(normaliseHeader('  Guardian\u2019s   Name ')).toBe("Guardian's Name")
+    expect(normaliseHeader('Guardian\u2018s Name')).toBe("Guardian's Name")
     expect(normaliseHeader('ID No.')).toBe('ID No.')
   })
 })
