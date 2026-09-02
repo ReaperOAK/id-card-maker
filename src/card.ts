@@ -93,7 +93,7 @@ interface CustomEmbedderInternals {
   embedder: { font: { ascent: number; unitsPerEm: number } }
 }
 
-function ascentAtSize(font: PDFFont, size: number): number {
+export function ascentAtSize(font: PDFFont, size: number): number {
   const fk = (font as unknown as CustomEmbedderInternals).embedder.font
   return (fk.ascent / fk.unitsPerEm) * size
 }
@@ -181,13 +181,23 @@ export function drawCard(args: DrawCardArgs): DrawCardResult {
     if (fit.overflow) overflowed.push(el.id)
 
     const ascent = ascentAtSize(font, fit.size)
+    // Position the whole block of lines within box.h per valign, then lay
+    // lines out top-down from that offset. Offset is computed once for the
+    // block, not per line, so line spacing within the block is unaffected.
+    const blockHeight = fit.lines.length * el.style.lineHeight
+    const valignOffset =
+      el.style.valign === 'middle'
+        ? (box.h - blockHeight) / 2
+        : el.style.valign === 'bottom'
+          ? box.h - blockHeight
+          : 0
     fit.lines.forEach((line, i) => {
       const indent = i === 0 ? el.style.firstLineIndent : 0
       const lineWidth = font.widthOfTextAtSize(line, fit.size)
       const available = box.w - indent
       const dx =
         el.style.align === 'center' ? (available - lineWidth) / 2 : el.style.align === 'right' ? available - lineWidth : 0
-      const topY = box.y + i * el.style.lineHeight
+      const topY = box.y + valignOffset + i * el.style.lineHeight
       page.drawText(line, {
         x: box.x + indent + dx,
         y: flipY(pageHeight, topY + ascent),
