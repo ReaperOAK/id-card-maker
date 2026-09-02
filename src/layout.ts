@@ -43,6 +43,23 @@ const textStyleSchema = z.object({
   align: z.enum(['left', 'center', 'right']).default('left'),
   valign: z.enum(['top', 'middle', 'bottom']).default('top'),
   fit: z.enum(['shrink', 'clip', 'wrap']).default('shrink'),
+  /**
+   * Overflow strategy for `fit: 'shrink'` text that does not fit its box at
+   * the designed size.
+   *
+   * 'shrink' (default) reduces the font size toward `minSize` — today's
+   * behaviour, unchanged.
+   *
+   * 'abbreviate-then-shrink' treats shrinking as the last resort: the first
+   * and last tokens always survive in full, and middle tokens are reduced to
+   * initials one at a time, left to right, until the text fits at the
+   * designed size. Only once every middle token has been abbreviated and the
+   * text still does not fit does it shrink, exactly as 'shrink' does. Meant
+   * for personal-name fields — abbreviating an address ("12 P. Street") would
+   * mangle it, and it is meaningless for a class or blood group — so it is
+   * opt-in per field.
+   */
+  overflow: z.enum(['shrink', 'abbreviate-then-shrink']).default('shrink'),
   minSize: z.number().positive(),
   lineHeight: z.number().positive(),
   maxLines: z.number().int().positive().default(1),

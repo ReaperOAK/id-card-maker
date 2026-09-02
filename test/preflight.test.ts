@@ -124,6 +124,36 @@ describe('runPreflight', () => {
     })
     expect(issues.some((i) => i.code === 'text-overflow' && i.level === 'warn')).toBe(true)
   })
+
+  it('warns and names the before/after text when a name is abbreviated to fit', () => {
+    // fixtures/layout.json's `name` element is overflow: 'abbreviate-then-shrink'
+    // with a 112.5pt box: "Ramesh Chandra Bhattacharjee" overflows the box in
+    // full but fits once the middle name is reduced to an initial, at the
+    // designed size — no shrink needed, so text-overflow must not also fire.
+    const issues = runPreflight({
+      layout: layout(),
+      rows: [{ index: 2, values: { 'ID No.': '101', Name: 'Ramesh Chandra Bhattacharjee' } }],
+      photos: new Map([['101', photo('101', 132, 172)]]),
+      fonts,
+    })
+    const abbreviated = issues.find((i) => i.code === 'text-abbreviated' && i.field === 'name')
+    expect(abbreviated?.level).toBe('warn')
+    expect(abbreviated?.message).toContain('"Ramesh Chandra Bhattacharjee"')
+    expect(abbreviated?.message).toContain('"Ramesh C. Bhattacharjee"')
+    expect(issues.some((i) => i.code === 'text-overflow' && i.field === 'name')).toBe(false)
+  })
+
+  it('does not warn text-abbreviated for a field left at overflow: shrink', () => {
+    // The 'class' element keeps the schema default (overflow: 'shrink'), so
+    // a long value there must shrink, never abbreviate.
+    const issues = runPreflight({
+      layout: layout(),
+      rows: [{ index: 2, values: { 'ID No.': '101', Name: 'A', Class: 'A Very Long Class Name' } }],
+      photos: new Map([['101', photo('101', 132, 172)]]),
+      fonts,
+    })
+    expect(issues.some((i) => i.code === 'text-abbreviated' && i.field === 'class')).toBe(false)
+  })
 })
 
 describe('summarise', () => {

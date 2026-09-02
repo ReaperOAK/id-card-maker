@@ -22,6 +22,7 @@ const style = (over: Partial<TextStyle> = {}): TextStyle => ({
   align: 'left',
   valign: 'top',
   fit: 'shrink',
+  overflow: 'shrink',
   minSize: 6,
   lineHeight: 10.555,
   maxLines: 1,
@@ -87,6 +88,135 @@ describe('fitText', () => {
 
     const shrunk = fitText('LAKSHMI PRIYADARSHINI VENKATARAGHAVAN', style({ fit: 'shrink' }), 112.5, arial)
     expect(shrunk.size).toBeLessThan(9)
+  })
+})
+
+// The reference name box: 112.5pt at Liberation Sans, the same field width
+// carried by fixtures/layout.json's `name` element. Every case below is
+// measured against the real font metrics, not a stub.
+const NAME_BOX = 112.5
+const abbrev = (over: Partial<TextStyle> = {}) => style({ overflow: 'abbreviate-then-shrink', ...over })
+
+describe('fitText overflow: abbreviate-then-shrink', () => {
+  it('leaves a name that already fits untouched, unabbreviated', () => {
+    const r = fitText('Anil Kumar Sharma', abbrev(), NAME_BOX, arial)
+    expect(r.size).toBe(9)
+    expect(r.lines).toEqual(['Anil Kumar Sharma'])
+    expect(r.overflow).toBe(false)
+    expect(r.abbreviated).toBe(false)
+  })
+
+  it('abbreviates the single middle name, keeping first and last intact', () => {
+    // Full text (128.6pt) overflows the 112.5pt box at 9; abbreviating the
+    // one middle token to an initial (103.1pt) fits at the designed size —
+    // no shrink needed.
+    const r = fitText('Ramesh Chandra Bhattacharjee', abbrev(), NAME_BOX, arial)
+    expect(r.size).toBe(9)
+    expect(r.lines).toEqual(['Ramesh C. Bhattacharjee'])
+    expect(r.overflow).toBe(false)
+    expect(r.abbreviated).toBe(true)
+  })
+
+  it('proves the ladder order: abbreviates at full size rather than shrinking, even though shrinking alone would fit', () => {
+    const text = 'Ramesh Chandra Bhattacharjee'
+
+    // Confirms the premise: shrinking the full, unabbreviated text alone
+    // (today's 'shrink' behaviour) already succeeds, at ~7.75pt. A naive
+    // implementation that shrinks before abbreviating would stop here,
+    // never abbreviate, and still pass a weaker "does it fit" assertion.
+    const shrunkAlone = fitText(text, style({ overflow: 'shrink' }), NAME_BOX, arial)
+    expect(shrunkAlone.overflow).toBe(false)
+    expect(shrunkAlone.size).toBeLessThan(9)
+
+    // The actual ladder must not take that route: it abbreviates the middle
+    // name and fits at the *designed* size, never touching minSize.
+    const ladder = fitText(text, abbrev(), NAME_BOX, arial)
+    expect(ladder.size).toBe(9)
+    expect(ladder.abbreviated).toBe(true)
+    expect(ladder.lines).toEqual(['Ramesh C. Bhattacharjee'])
+  })
+
+  it('abbreviates two middle names left to right, one at a time, stopping as soon as it fits', () => {
+    const full = 'Anitha Lakshmi Priyadarshini Narasimhan'
+    const afterFirstOnly = 'Anitha L. Priyadarshini Narasimhan'
+
+    // Full text overflows, and so does abbreviating only the first middle
+    // name — the ladder must not stop there.
+    expect(arial.widthOfTextAtSize(full, 9)).toBeGreaterThan(NAME_BOX)
+    expect(arial.widthOfTextAtSize(afterFirstOnly, 9)).toBeGreaterThan(NAME_BOX)
+
+    const r = fitText(full, abbrev(), NAME_BOX, arial)
+    expect(r.size).toBe(9)
+    expect(r.lines).toEqual(['Anitha L. P. Narasimhan'])
+    expect(r.overflow).toBe(false)
+    expect(r.abbreviated).toBe(true)
+  })
+
+  it('falls straight through to shrinking for a two-token name — no middle to abbreviate', () => {
+    const r = fitText('Venkataraghavan Subramaniam', abbrev(), NAME_BOX, arial)
+    expect(r.abbreviated).toBe(false)
+    expect(r.size).toBeLessThan(9)
+    expect(r.size).toBe(7.75)
+    expect(r.lines).toEqual(['Venkataraghavan Subramaniam'])
+  })
+
+  it('handles a single-token name: unabbreviated whether it fits or must shrink', () => {
+    const fits = fitText('Om', abbrev(), NAME_BOX, arial)
+    expect(fits.size).toBe(9)
+    expect(fits.abbreviated).toBe(false)
+    expect(fits.lines).toEqual(['Om'])
+
+    const mustShrink = fitText('Venkataraghavansubramaniam', abbrev(), NAME_BOX, arial)
+    expect(mustShrink.abbreviated).toBe(false)
+    expect(mustShrink.size).toBe(8)
+    expect(mustShrink.lines).toEqual(['Venkataraghavansubramaniam'])
+  })
+
+  it('does not re-abbreviate a name that already contains an initial', () => {
+    // The middle token is already "P." — abbreviating it again yields
+    // nothing, so the ladder has no rung beyond the original text and goes
+    // straight to shrinking, exactly as if there were no middle at all.
+    const r = fitText('Lakshmi P. Venkataraghavan', abbrev(), NAME_BOX, arial)
+    expect(r.abbreviated).toBe(false)
+    expect(r.overflow).toBe(false)
+    expect(r.size).toBe(8.5)
+    expect(r.lines).toEqual(['Lakshmi P. Venkataraghavan'])
+  })
+
+  it('shrinks after abbreviation is exhausted, and still reports overflow when minSize is not enough', () => {
+    // First and last are themselves long enough that even the fully
+    // abbreviated form cannot fit the 112.5pt box at minSize.
+    const text = 'Venkataraghavansubramaniam Priyadarshini Padmanabhachandrasekharan'
+    const r = fitText(text, abbrev(), NAME_BOX, arial)
+    expect(r.abbreviated).toBe(true)
+    expect(r.overflow).toBe(true)
+    expect(r.size).toBe(6)
+    expect(r.lines[0]).toContain('P.')
+  })
+})
+
+describe('fitText overflow: shrink (regression guard)', () => {
+  it('behaves exactly as before — the schema default and an explicit shrink are identical and never abbreviate', () => {
+    const cases: Array<[string, number]> = [
+      ['Rahul Kumar', 112.5],
+      ['LAKSHMI PRIYADARSHINI VENKATARAGHAVAN', 112.5],
+      ['Ramesh Chandra Bhattacharjee', 112.5],
+    ]
+    for (const [text, box] of cases) {
+      const withDefault = fitText(text, style(), box, arial)
+      const withExplicitShrink = fitText(text, style({ overflow: 'shrink' }), box, arial)
+      expect(withExplicitShrink).toEqual(withDefault)
+      expect(withExplicitShrink.abbreviated).toBe(false)
+    }
+  })
+
+  it('never abbreviates a name that abbreviate-then-shrink would have shortened, shrinking instead', () => {
+    const text = 'Ramesh Chandra Bhattacharjee'
+    const r = fitText(text, style({ overflow: 'shrink' }), 112.5, arial)
+    expect(r.abbreviated).toBe(false)
+    expect(r.lines[0]).not.toContain('.')
+    expect(r.lines).toEqual(['Ramesh Chandra Bhattacharjee'])
+    expect(r.size).toBeLessThan(9)
   })
 })
 

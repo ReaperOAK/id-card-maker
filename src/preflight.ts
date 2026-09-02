@@ -9,7 +9,7 @@ export type IssueLevel = 'block' | 'warn'
 
 export interface Issue {
   level: IssueLevel
-  code: 'photo-missing' | 'photo-dpi' | 'id-duplicate' | 'id-empty' | 'field-empty' | 'text-overflow'
+  code: 'photo-missing' | 'photo-dpi' | 'id-duplicate' | 'id-empty' | 'field-empty' | 'text-overflow' | 'text-abbreviated'
   /** Source spreadsheet row number. */
   row: number
   /** Layout element id, where the issue belongs to one field. */
@@ -106,6 +106,20 @@ export function runPreflight(args: PreflightArgs): Issue[] {
       }
       if (text === '') continue
       const fit = fitText(text, el.style, el.box.w, fonts.get(el.style.fontId))
+      // A student's name being altered on their own ID card must not happen
+      // silently. This fires independently of text-overflow below: the two
+      // report different facts — one that the text was changed, the other
+      // that even the changed text still does not fit — and either can be
+      // true without the other.
+      if (fit.abbreviated) {
+        issues.push({
+          level: 'warn',
+          code: 'text-abbreviated',
+          row: row.index,
+          field: el.id,
+          message: `"${text}" shortened to "${fit.lines.join(' ')}" to fit`,
+        })
+      }
       if (fit.overflow) {
         issues.push({
           level: 'warn',
