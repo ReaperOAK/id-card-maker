@@ -40,11 +40,13 @@ export function runPreflight(args: PreflightArgs): Issue[] {
   const duplicates = findDuplicateIds(rows, layout.idColumn)
   for (const [id, rowNumbers] of duplicates) {
     for (const row of rowNumbers) {
+      const others = rowNumbers.filter((r) => r !== row)
+      const noun = others.length === 1 ? 'row' : 'rows'
       issues.push({
         level: 'block',
         code: 'id-duplicate',
         row,
-        message: `id "${id}" also appears on row ${rowNumbers.filter((r) => r !== row).join(', ')}`,
+        message: `id "${id}" also appears on ${noun} ${others.join(', ')}`,
       })
     }
   }
@@ -75,7 +77,7 @@ export function runPreflight(args: PreflightArgs): Issue[] {
               code: 'photo-dpi',
               row: row.index,
               field: el.id,
-              message: `photo is ${dpi.toFixed(0)}dpi at printed size, below the ${DPI_FLOOR}dpi floor`,
+              message: `photo is ${dpi.toFixed(1)}dpi at printed size, below the ${DPI_FLOOR}dpi floor`,
             })
           } else if (dpi < Math.min(DPI_IDEAL, Math.max(layout.photoTargetDpi, DPI_FLOOR))) {
             issues.push({
@@ -83,7 +85,7 @@ export function runPreflight(args: PreflightArgs): Issue[] {
               code: 'photo-dpi',
               row: row.index,
               field: el.id,
-              message: `photo is ${dpi.toFixed(0)}dpi, below the ${layout.photoTargetDpi}dpi target`,
+              message: `photo is ${dpi.toFixed(1)}dpi, below the ${layout.photoTargetDpi}dpi target`,
             })
           }
         }

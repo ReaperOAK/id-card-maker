@@ -38,7 +38,41 @@ describe('runPreflight', () => {
       photos: new Map([['102', photo('102', 132, 172)]]),
       fonts,
     })
-    expect(issues.filter((i) => i.code === 'id-duplicate')).toHaveLength(2)
+    const dup = issues.filter((i) => i.code === 'id-duplicate')
+    expect(dup).toHaveLength(2)
+    expect(dup.every((i) => i.level === 'block')).toBe(true)
+  })
+
+  it('pluralises "rows" when a duplicate id spans more than two other rows', () => {
+    const issues = runPreflight({
+      layout: layout(),
+      rows: [
+        { index: 2, values: { 'ID No.': '102', Name: 'A' } },
+        { index: 3, values: { 'ID No.': '102', Name: 'B' } },
+        { index: 9, values: { 'ID No.': '102', Name: 'C' } },
+      ],
+      photos: new Map([['102', photo('102', 132, 172)]]),
+      fonts,
+    })
+    const dup = issues.filter((i) => i.code === 'id-duplicate')
+    expect(dup).toHaveLength(3)
+    const byRow = new Map(dup.map((i) => [i.row, i.message]))
+    expect(byRow.get(2)).toContain('rows 3, 9')
+    expect(byRow.get(3)).toContain('rows 2, 9')
+    expect(byRow.get(9)).toContain('rows 2, 3')
+  })
+
+  it('does not also report a missing photo for a row whose id is blank', () => {
+    const issues = runPreflight({
+      layout: layout(),
+      rows: [{ index: 2, values: { 'ID No.': '', Name: 'A' } }],
+      photos: new Map(),
+      fonts,
+    })
+    expect(issues.some((i) => i.code === 'id-empty')).toBe(true)
+    // The id is the thing that is wrong; reporting a missing photo as well
+    // sends the operator hunting for a file that was never named.
+    expect(issues.some((i) => i.code === 'photo-missing')).toBe(false)
   })
 
   it('warns below the target dpi and blocks below 150', () => {
@@ -53,6 +87,22 @@ describe('runPreflight', () => {
     expect(warn.find((i) => i.code === 'photo-dpi')?.level).toBe('warn')
   })
 
+  it('shows a dpi figure that does not contradict the threshold it failed', () => {
+    // 100x130px in the reference 47.78x62.53pt frame is 149.69dpi — just under
+    // the floor. Rounded to whole numbers it would print as "150dpi ... below
+    // the 150dpi floor", which reads as a bug to the operator.
+    const issues = runPreflight({
+      layout: layout(),
+      rows: [{ index: 2, values: { 'ID No.': '101', Name: 'A' } }],
+      photos: new Map([['101', photo('101', 100, 130)]]),
+      fonts,
+    })
+    const dpiIssue = issues.find((i) => i.code === 'photo-dpi')
+    expect(dpiIssue?.level).toBe('block')
+    expect(dpiIssue?.message).toContain('149.7')
+    expect(dpiIssue?.message).not.toMatch(/\b150dpi at printed size/)
+  })
+
   it('blocks a required field left empty and does not block one with a fallback', () => {
     const issues = runPreflight({
       layout: layout(),
@@ -60,7 +110,8 @@ describe('runPreflight', () => {
       photos: new Map([['101', photo('101', 132, 172)]]),
       fonts,
     })
-    expect(issues.some((i) => i.code === 'field-empty' && i.field === 'name')).toBe(true)
+    const nameIssue = issues.find((i) => i.code === 'field-empty' && i.field === 'name')
+    expect(nameIssue?.level).toBe('block')
     expect(issues.some((i) => i.code === 'field-empty' && i.field === 'blood')).toBe(false)
   })
 
