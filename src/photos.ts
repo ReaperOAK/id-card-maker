@@ -13,7 +13,15 @@ export interface PhotoEntry {
 
 const SUPPORTED = new Set(['.jpg', '.jpeg', '.png'])
 
-function pngSize(b: Buffer): { width: number; height: number } {
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/** Read IHDR width/height, after verifying the PNG signature and first chunk type. */
+function pngSize(b: Buffer, path: string): { width: number; height: number } {
+  const truncatedOrNotPng = (): Error =>
+    new Error(`pngSize: ${path} is truncated or not a PNG`)
+  if (b.length < 24) throw truncatedOrNotPng()
+  if (!b.subarray(0, 8).equals(PNG_SIGNATURE)) throw truncatedOrNotPng()
+  if (b.toString('ascii', 12, 16) !== 'IHDR') throw truncatedOrNotPng()
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) }
 }
 
@@ -43,30 +51,52 @@ function jpegSize(b: Buffer, path: string): { width: number; height: number } {
   throw new Error(`jpegSize: no SOF marker found in ${path} (truncated or not a JPEG)`)
 }
 
-export async function buildPhotoIndex(dir: string): Promise<{ byId: Map<string, PhotoEntry>; unmatched: PhotoEntry[] }> {
+export interface PhotoIndex {
+  byId: Map<string, PhotoEntry>
+  unmatched: PhotoEntry[]
+  /** Normalised ids claimed by more than one file, mapped to every path that claimed them. */
+  collisions: Map<string, string[]>
+}
+
+export async function buildPhotoIndex(dir: string): Promise<PhotoIndex> {
   const byId = new Map<string, PhotoEntry>()
   const unmatched: PhotoEntry[] = []
+  const collisions = new Map<string, string[]>()
 
   let names: string[]
   try {
     names = await readdir(dir)
   } catch {
-    return { byId, unmatched }
+    return { byId, unmatched, collisions }
   }
+
+  // Sort so "first file wins on collision" is deterministic rather than dependent
+  // on filesystem readdir order.
+  names.sort()
 
   for (const name of names) {
     const ext = extname(name).toLowerCase()
     if (!SUPPORTED.has(ext)) continue
     const path = join(dir, name)
     const bytes = await readFile(path)
-    const size = ext === '.png' ? pngSize(bytes) : jpegSize(bytes, path)
+    const size = ext === '.png' ? pngSize(bytes, path) : jpegSize(bytes, path)
     const id = normaliseId(parse(name).name)
     const entry: PhotoEntry = { path, id, ...size }
-    if (id === '') unmatched.push(entry)
-    else byId.set(id, entry)
+    if (id === '') {
+      unmatched.push(entry)
+      continue
+    }
+    const existing = byId.get(id)
+    if (existing === undefined) {
+      byId.set(id, entry)
+      continue
+    }
+    const claimants = collisions.get(id)
+    if (claimants === undefined) collisions.set(id, [existing.path, path])
+    else claimants.push(path)
   }
 
-  return { byId, unmatched }
+  return { byId, unmatched, collisions }
 }
 
 /**
@@ -74,6 +104,10 @@ export async function buildPhotoIndex(dir: string): Promise<{ byId: Map<string, 
  * The more constrained axis governs, because cover-fit crops the other one.
  */
 export function effectiveDpi(entry: Pick<PhotoEntry, 'width' | 'height'>, box: Rect): number {
+  // A non-positive box dimension means the photo cannot be placed at all. Without this
+  // guard both axes evaluate to Infinity, which passes every ">=" resolution gate instead
+  // of failing all of them.
+  if (box.w <= 0 || box.h <= 0) return 0
   const across = entry.width / (box.w / 72)
   const down = entry.height / (box.h / 72)
   return Math.min(across, down)
