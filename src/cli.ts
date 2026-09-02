@@ -1,13 +1,29 @@
 #!/usr/bin/env node
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import { loadRows } from './data.js'
+import type { FlipAxis } from './impose.js'
 import { parseLayout } from './layout.js'
 import { buildPhotoIndex } from './photos.js'
 import { renderJob } from './render-job.js'
 import { summarise } from './preflight.js'
 import { detectTrim } from './trim.js'
+
+/**
+ * Validates the `--flip` value. Exported so it is unit-testable without
+ * spawning the CLI as a subprocess. Rejects rather than defaulting silently:
+ * `RenderJobArgs.flipAxis` is honoured correctly once it arrives, but a wrong
+ * axis backs every card in a duplex job onto the wrong front, and that is
+ * only discovered after cutting.
+ */
+export function parseFlipAxis(value: string): FlipAxis {
+  if (value !== 'long-edge' && value !== 'short-edge') {
+    throw new Error(`--flip must be "long-edge" or "short-edge", got "${value}"`)
+  }
+  return value
+}
 
 const program = new Command()
 program.name('idcard').description('Batch ID card generator').version('0.1.0')
@@ -31,8 +47,10 @@ program
   .option('-p, --photos <dir>')
   .option('-o, --out <dir>', 'output directory', 'out')
   .option('--name <text>', 'job name printed on the sheet slug')
+  .option('--flip <axis>', 'duplex flip axis for the back sheet: long-edge or short-edge', 'long-edge')
   .option('--force', 'generate even when preflight reports blocking issues', false)
-  .action(async (opts: { layout: string; data: string; photos?: string; out: string; name?: string; force: boolean }) => {
+  .action(async (opts: { layout: string; data: string; photos?: string; out: string; name?: string; flip: string; force: boolean }) => {
+    const flipAxis = parseFlipAxis(opts.flip)
     const layoutPath = resolve(opts.layout)
     const layout = parseLayout(JSON.parse(await readFile(layoutPath, 'utf8')))
     const base = dirname(layoutPath)
@@ -62,6 +80,7 @@ program
       photos: photoIndex.byId,
       jobName: opts.name ?? layout.name,
       allowOverrides: opts.force,
+      flipAxis,
     })
 
     const counts = summarise(result.issues)
@@ -74,4 +93,12 @@ program
     console.log(`wrote ${join(opts.out, 'job-fronts.pdf')}`)
   })
 
-await program.parseAsync(process.argv)
+// Only run the CLI when this file is the process entry point, not merely
+// imported (e.g. by tests that import `parseFlipAxis` above). Without this
+// guard, importing this module for its exports would also run `commander`
+// against whatever process spawned it (a test runner, say), which does not
+// share this file's command surface.
+const isMain = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isMain) {
+  await program.parseAsync(process.argv)
+}

@@ -90,12 +90,22 @@ function toPdfColor(c: Colour): Color {
  * `embedStandardFont`).
  */
 interface CustomEmbedderInternals {
-  embedder: { font: { ascent: number; unitsPerEm: number } }
+  embedder: { font: { ascent: number; capHeight: number; unitsPerEm: number } }
 }
 
 export function ascentAtSize(font: PDFFont, size: number): number {
   const fk = (font as unknown as CustomEmbedderInternals).embedder.font
   return (fk.ascent / fk.unitsPerEm) * size
+}
+
+/**
+ * Same rationale and access path as `ascentAtSize` above — there is no public
+ * pdf-lib API for it either. Exposed for tests that need to predict where a
+ * capital letter's top row of ink lands, since that is `baseline - capHeight`.
+ */
+export function capHeightAtSize(font: PDFFont, size: number): number {
+  const fk = (font as unknown as CustomEmbedderInternals).embedder.font
+  return (fk.capHeight / fk.unitsPerEm) * size
 }
 
 /** Push a rectangular clip in PDF space. Everything drawn until popGraphicsState is confined to it. */
@@ -180,17 +190,37 @@ export function drawCard(args: DrawCardArgs): DrawCardResult {
     const fit = fitText(text, el.style, box.w, font)
     if (fit.overflow) overflowed.push(el.id)
 
-    const ascent = ascentAtSize(font, fit.size)
+    // Anchor on the element's *designed* size, never the shrunk size.
+    // Shrinking must change the glyph size, not the baseline — anchoring on
+    // fit.size here would move the baseline whenever shrink-to-fit kicks in,
+    // so a card whose name shrank would draw at a different baseline than
+    // its neighbour whose name did not, even though both share the same
+    // box.y. See the box.y contract documented on elementSchema in layout.ts.
+    const ascent = ascentAtSize(font, el.style.size)
     // Position the whole block of lines within box.h per valign, then lay
     // lines out top-down from that offset. Offset is computed once for the
     // block, not per line, so line spacing within the block is unaffected.
+    // Clamped at 0: a block taller than its box (more lines than the box was
+    // designed to hold) would otherwise produce a negative offset for
+    // middle/bottom, drawing the block upward out of the box and into
+    // whatever sits above it.
     const blockHeight = fit.lines.length * el.style.lineHeight
-    const valignOffset =
+    const valignOffset = Math.max(
+      0,
       el.style.valign === 'middle'
         ? (box.h - blockHeight) / 2
         : el.style.valign === 'bottom'
           ? box.h - blockHeight
-          : 0
+          : 0,
+    )
+
+    // fitText's 'clip' mode returns the full (possibly overflowing) string
+    // unshrunk and un-wrapped and relies on the caller to actually clip it —
+    // fitText itself only reports whether it overflows. Without this, a
+    // clip-fit box draws every glyph the string contains, however far past
+    // the box edge that runs, straight across whatever field is next to it.
+    const clipped = el.style.fit === 'clip'
+    if (clipped) clipTo(page, box, pageHeight)
     fit.lines.forEach((line, i) => {
       const indent = i === 0 ? el.style.firstLineIndent : 0
       const lineWidth = font.widthOfTextAtSize(line, fit.size)
@@ -206,6 +236,7 @@ export function drawCard(args: DrawCardArgs): DrawCardResult {
         color: toPdfColor(el.style.color),
       })
     })
+    if (clipped) page.pushOperators(popGraphicsState())
   }
 
   page.pushOperators(popGraphicsState())

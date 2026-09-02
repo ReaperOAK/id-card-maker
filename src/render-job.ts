@@ -36,6 +36,29 @@ export interface JobResult {
 
 const SHEET = { w: inches(18), h: inches(12) }
 
+/** How far a measured page size may drift from what the layout expects before it counts as a mismatch. */
+const PAGE_SIZE_TOLERANCE_PT = 0.5
+
+interface PageSize {
+  w: number
+  h: number
+}
+
+function formatSize(s: PageSize): string {
+  return `${s.w.toFixed(2)}x${s.h.toFixed(2)}pt`
+}
+
+function sizesMismatch(a: PageSize, b: PageSize): boolean {
+  return Math.abs(a.w - b.w) > PAGE_SIZE_TOLERANCE_PT || Math.abs(a.h - b.h) > PAGE_SIZE_TOLERANCE_PT
+}
+
+/** The real page size of a template PDF's first page, read without stamping it onto anything. */
+async function templatePageSize(templateBytes: Uint8Array): Promise<PageSize> {
+  const doc = await PDFDocument.load(templateBytes)
+  const page = doc.getPage(0)
+  return { w: page.getWidth(), h: page.getHeight() }
+}
+
 async function embedPhoto(doc: PDFDocument, entry: PhotoEntry): Promise<PDFImage> {
   const bytes = await readFile(entry.path)
   return entry.path.toLowerCase().endsWith('.png') ? doc.embedPng(bytes) : doc.embedJpg(bytes)
@@ -109,12 +132,47 @@ export async function renderJob(args: RenderJobArgs): Promise<JobResult> {
     throw new Error(`Preflight found ${blocking} blocking issue(s). Resolve them or re-run with overrides enabled.`)
   }
 
+  // page.drawPage scales the embedded template to whatever width/height it is
+  // given — drawCard passes layout.pageBox for that, trusting it unchecked.
+  // If the real template page is a different size, every card is silently
+  // rescaled while element boxes stay put, and the cell clip hides the
+  // overflow so the card looks normal from outside. Catch that here, before
+  // any drawing happens, rather than let it ship on every card in the job.
+  const frontSize = await templatePageSize(args.templateFront)
+  if (sizesMismatch(frontSize, args.layout.pageBox)) {
+    throw new Error(
+      `Front template page size ${formatSize(frontSize)} does not match layout.pageBox ${formatSize(args.layout.pageBox)}. ` +
+        `Every element box would be scaled against the wrong page.`,
+    )
+  }
+  if (args.templateBack) {
+    const backSize = await templatePageSize(args.templateBack)
+    if (sizesMismatch(backSize, frontSize)) {
+      throw new Error(
+        `Back template page size ${formatSize(backSize)} does not match front template page size ${formatSize(frontSize)}. ` +
+          `Duplex registration requires both sides to be the same size.`,
+      )
+    }
+  }
+
   const grid = solveGrid({
     sheet: SHEET,
     card: { w: args.layout.trim.w, h: args.layout.trim.h },
     gutter: args.gutter ?? mm(3),
     minMargin: args.minMargin ?? mm(5),
   })
+
+  // solveGrid can choose a rotated orientation when it packs more cards, but
+  // drawCard always stamps the template unrotated — nothing in this renderer
+  // can rotate a card. Rendering anyway would silently crop every card on
+  // the sheet down to a fragment, with no error and no preflight issue.
+  if (grid.rotated) {
+    throw new Error(
+      `Rotated imposition is not supported yet: card ${args.layout.trim.w.toFixed(2)}x${args.layout.trim.h.toFixed(2)}pt ` +
+        `only reaches its best fit on sheet ${SHEET.w.toFixed(2)}x${SHEET.h.toFixed(2)}pt when rotated 90 degrees, ` +
+        `and this renderer cannot draw a rotated card.`,
+    )
+  }
 
   const frontPdf = await buildSide(args, args.templateFront, 'front', grid, args.photos)
   const backPdf =

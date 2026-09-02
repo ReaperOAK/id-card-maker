@@ -29,6 +29,15 @@ const bindingSchema = z.object({
 
 const textStyleSchema = z.object({
   fontId: z.string().min(1),
+  /**
+   * The element's designed size. Shrink-to-fit may draw glyphs smaller than
+   * this, but the baseline is always anchored on `size`, never on whatever
+   * size the text actually shrank to — see the `box.y` contract documented
+   * on `elementSchema` below. Anchoring on the shrunk size instead would move
+   * the baseline every time shrink-to-fit kicks in, so a card whose value
+   * shrank would draw at a different baseline than a neighbouring card whose
+   * value did not, even though both share the same `box.y`.
+   */
   size: z.number().positive(),
   color: colourSchema,
   align: z.enum(['left', 'center', 'right']).default('left'),
@@ -42,6 +51,30 @@ const textStyleSchema = z.object({
 
 const page = z.enum(['front', 'back'])
 
+/**
+ * The `box.y` contract for `text` and `static` elements (the two kinds that
+ * carry a `style: TextStyle`).
+ *
+ * `box` is a top-left, points rect, but `box.y` is not itself a drawing
+ * origin — it is the top of the *line box*. The renderer (`drawCard` in
+ * card.ts) draws the first line's baseline at
+ * `box.y + ascent(bound font, style.size)`, and every subsequent line
+ * `style.lineHeight` further down. `style.size` is the element's *designed*
+ * size: shrink-to-fit may draw a smaller glyph, but it never moves the
+ * baseline.
+ *
+ * `ascent` is a metric of the specific font file bound to `style.fontId`,
+ * not a layout constant — it is not even the same across two Latin
+ * text fonts at the same nominal size (Liberation Sans 9pt and Times New
+ * Roman 9pt do not share an ascent). A layout's `box.y` values are therefore
+ * only correct for the font that layout actually binds. Porting a layout to
+ * a different overlay font — or re-deriving `box.y` from a fresh set of
+ * measurements without accounting for the new font's ascent — without
+ * recomputing `box.y` silently shifts every baseline on every card.
+ *
+ * A `photo` element's `box` carries no such contract: its `y` is a plain box
+ * top, used only to place and clip the image.
+ */
 const elementSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text'), id: z.string().min(1), page, box: rect, bind: bindingSchema, style: textStyleSchema }),
   z.object({

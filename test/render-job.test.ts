@@ -222,4 +222,73 @@ describe('renderJob', () => {
     // photo were embedded, the two outputs could not match byte for byte.
     expect(withUnusedPhoto.frontPdf.byteLength).toBe(withoutPhoto.frontPdf.byteLength)
   })
+
+  it('throws rather than silently cropping when the grid would require a rotated card (F2)', async () => {
+    // 140x90 upright fits 9x9 = 81 on this sheet with no gutter/margin; turned
+    // 90 wide by 140 tall it fits 14x6 = 84 — solveGrid prefers rotation (see
+    // grid.test.ts), but drawCard always stamps the template unrotated.
+    const templateDoc = await PDFDocument.create()
+    templateDoc.addPage([140, 90])
+    const template = await templateDoc.save()
+
+    const base = layout()
+    const rotatedLayout = {
+      ...base,
+      pageBox: { w: 140, h: 90 },
+      trim: { x: 0, y: 0, w: 140, h: 90 },
+      front: [],
+      back: [],
+    } as typeof base
+
+    await expect(
+      renderJob({
+        layout: rotatedLayout,
+        templateFront: template,
+        templateBack: null,
+        rows: [{ index: 2, values: { 'ID No.': '1' } }],
+        photos: new Map(),
+        jobName: 'Rotated',
+        allowOverrides: true,
+        gutter: 0,
+        minMargin: 0,
+      }),
+    ).rejects.toThrow(/rotat/i)
+  })
+
+  it('throws when the front template page size does not match layout.pageBox (F3)', async () => {
+    const mismatchedDoc = await PDFDocument.create()
+    mismatchedDoc.addPage([288 * 2, 216 * 2]) // layout.json declares pageBox 288x216
+    const mismatched = await mismatchedDoc.save()
+
+    await expect(
+      renderJob({
+        layout: layout(),
+        templateFront: mismatched,
+        templateBack: null,
+        rows: [{ index: 2, values: { 'ID No.': '101', Name: 'A' } }],
+        photos: new Map(),
+        jobName: 'Bad front size',
+        allowOverrides: true,
+      }),
+    ).rejects.toThrow(/page size/i)
+  })
+
+  it('throws when the back template page size does not match the front template (F3)', async () => {
+    const front = new Uint8Array(readFileSync('fixtures/template.pdf')) // 288x216, matches layout.json's pageBox
+    const backDoc = await PDFDocument.create()
+    backDoc.addPage([300, 216]) // differs from the front by more than the 0.5pt tolerance
+    const back = await backDoc.save()
+
+    await expect(
+      renderJob({
+        layout: layout(),
+        templateFront: front,
+        templateBack: back,
+        rows: [{ index: 2, values: { 'ID No.': '101', Name: 'A' } }],
+        photos: new Map(),
+        jobName: 'Bad back size',
+        allowOverrides: true,
+      }),
+    ).rejects.toThrow(/back/i)
+  })
 })

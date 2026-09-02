@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { PDFDocument } from 'pdf-lib'
+import type { PDFFont } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { FontRegistry } from '../src/fonts.js'
-import { applyTransform, ascentAtSize, drawCard, resolveText } from '../src/card.js'
-import type { Element } from '../src/layout.js'
+import { applyTransform, ascentAtSize, capHeightAtSize, drawCard, resolveText } from '../src/card.js'
+import type { Element, TextStyle } from '../src/layout.js'
 import { parseLayout } from '../src/layout.js'
 import { rasterize } from '../src/raster.js'
+import { fitText } from '../src/text-fit.js'
 
 const layout = () => parseLayout(JSON.parse(readFileSync('fixtures/layout.json', 'utf8')))
 
@@ -236,6 +238,245 @@ describe('drawCard', () => {
 
       expect(middleRow).toBeGreaterThan(topRow)
       expect(bottomRow).toBeGreaterThan(middleRow)
+    })
+  })
+
+  describe('baseline anchoring (F1)', () => {
+    // Every element here draws only the glyph 'H': flat-topped, with no part
+    // of the glyph rising above cap height, so the topmost row of ink is
+    // predictable — exactly capHeight above the baseline, at whatever size
+    // the text actually ends up drawn at.
+    const hStyle = (minSize: number): TextStyle => ({
+      fontId: 'value',
+      size: 24,
+      color: { space: 'rgb', r: 0, g: 0, b: 0 },
+      align: 'left',
+      valign: 'top',
+      fit: 'shrink',
+      minSize,
+      lineHeight: 30,
+      maxLines: 1,
+      firstLineIndent: 0,
+    })
+
+    const hElement = (id: string, text: string, boxW: number, minSize: number): Element => ({
+      kind: 'static',
+      id,
+      page: 'front',
+      box: { x: 40, y: 60, w: boxW, h: 40 },
+      text,
+      style: hStyle(minSize),
+    })
+
+    async function renderAndFindTopInkRow(el: Element) {
+      const l = layout()
+      const out = await PDFDocument.create()
+      const page = out.addPage([400, 400])
+      const fonts = await FontRegistry.load(l.fonts, out)
+      const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
+      const cell = { x: 0, y: 0, w: l.trim.w, h: l.trim.h }
+
+      drawCard({
+        page,
+        embedded: embedded!,
+        layout: l,
+        elements: [el],
+        fonts,
+        row: { index: 1, values: {} },
+        cell,
+        photo: null,
+      })
+
+      const raster = await rasterize(new Uint8Array(await out.save()), 0, 72)
+      for (let y = 0; y < raster.height; y++) {
+        for (let x = 0; x < raster.width; x++) {
+          const i = (y * raster.width + x) * 4
+          if ((raster.rgba[i + 3] ?? 0) === 0) continue
+          const r = raster.rgba[i] ?? 255
+          const g = raster.rgba[i + 1] ?? 255
+          const b = raster.rgba[i + 2] ?? 255
+          if (r < 40 && g < 40 && b < 40) return { topRow: y, font: fonts.get('value'), l, cell }
+        }
+      }
+      throw new Error('no ink found')
+    }
+
+    it('draws the topmost ink row where box.y + ascent - capHeight predicts, within ~1pt', async () => {
+      const style = hStyle(6)
+      const el = hElement('h_pin', 'H', 300, 6)
+      const { topRow, font, l, cell } = await renderAndFindTopInkRow(el)
+      // box.y is in template page coordinates; drawCard offsets it by the
+      // cell/trim placement before drawing, so the prediction must too.
+      const boxY = cell.y - l.trim.y + el.box.y
+      const predicted = boxY + ascentAtSize(font, style.size) - capHeightAtSize(font, style.size)
+      expect(Math.abs(topRow - predicted)).toBeLessThanOrEqual(1)
+    })
+
+    it('anchors a value that shrinks at the same baseline as one that does not — the regression guard for F1(a)', async () => {
+      const style = hStyle(6)
+      const noShrink = hElement('h_full', 'H', 300, 6)
+      const shrunk = hElement('h_shrunk', 'HHHHHH', 60, 6)
+
+      const a = await renderAndFindTopInkRow(noShrink)
+      const b = await renderAndFindTopInkRow(shrunk)
+
+      const fitA = fitText('H', style, 300, a.font)
+      const fitB = fitText('HHHHHH', style, 60, b.font)
+      // Confirms the fixture actually exercises shrink-to-fit; otherwise this
+      // test would pass vacuously regardless of which size the baseline is
+      // anchored on.
+      expect(fitB.size).toBeLessThan(fitA.size)
+
+      // topRow + capHeight(at the size actually drawn) recovers the baseline
+      // each element was drawn at. Anchoring the baseline on the shrunk size
+      // (F1's regression) would separate these by the gap between the two
+      // capHeights — several points for this font and box, not noise.
+      const baselineA = a.topRow + capHeightAtSize(a.font, fitA.size)
+      const baselineB = b.topRow + capHeightAtSize(b.font, fitB.size)
+      expect(Math.abs(baselineA - baselineB)).toBeLessThanOrEqual(1)
+    })
+  })
+
+  describe('fit: clip (F5)', () => {
+    it('draws no ink from a clip element outside its own box', async () => {
+      const l = layout()
+      const out = await PDFDocument.create()
+      const page = out.addPage([400, 400])
+      const fonts = await FontRegistry.load(l.fonts, out)
+      const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
+      const cell = { x: 0, y: 0, w: l.trim.w, h: l.trim.h }
+
+      const el: Element = {
+        kind: 'static',
+        id: 'clip_overflow',
+        page: 'front',
+        // A narrow box holding a string many times wider than it, at a fit
+        // mode ('clip') that never shrinks or wraps — fitText hands back the
+        // whole overflowing string and only reports overflow: true, relying
+        // on the caller to actually clip it.
+        box: { x: 60, y: 80, w: 40, h: 20 },
+        text: 'WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW',
+        style: {
+          fontId: 'value',
+          size: 20,
+          color: { space: 'rgb', r: 0, g: 0, b: 1 },
+          align: 'left',
+          valign: 'top',
+          fit: 'clip',
+          minSize: 20,
+          lineHeight: 24,
+          maxLines: 1,
+          firstLineIndent: 0,
+        },
+      }
+
+      drawCard({
+        page,
+        embedded: embedded!,
+        layout: l,
+        elements: [el],
+        fonts,
+        row: { index: 1, values: {} },
+        cell,
+        photo: null,
+      })
+
+      const raster = await rasterize(new Uint8Array(await out.save()), 0, 72)
+      const bx = cell.x - l.trim.x + el.box.x
+      const by = cell.y - l.trim.y + el.box.y
+
+      let inside = 0
+      let outside = 0
+      for (let y = 0; y < raster.height; y++) {
+        for (let x = 0; x < raster.width; x++) {
+          const i = (y * raster.width + x) * 4
+          if ((raster.rgba[i + 3] ?? 0) === 0) continue
+          const r = raster.rgba[i] ?? 0
+          const g = raster.rgba[i + 1] ?? 0
+          const b = raster.rgba[i + 2] ?? 0
+          if (!(b > 200 && r < 80 && g < 80)) continue
+          const within = x >= bx - 1 && x <= bx + el.box.w + 1 && y >= by - 1 && y <= by + el.box.h + 1
+          if (within) inside++
+          else outside++
+        }
+      }
+      // The string is wide enough that, unclipped, it would draw ink far past
+      // the right edge of a 40pt box — confirm some ink was actually drawn
+      // (the test would prove nothing if the string were invisible), and that
+      // every drawn pixel is contained in the box.
+      expect(inside).toBeGreaterThan(0)
+      expect(outside).toBe(0)
+    })
+  })
+
+  describe('valignOffset clamp (Minor 7)', () => {
+    it('never draws a block above the top of its own box, even when the block is taller than the box', async () => {
+      const l = layout()
+      const out = await PDFDocument.create()
+      const page = out.addPage([400, 400])
+      const fonts = await FontRegistry.load(l.fonts, out)
+      const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
+      const cell = { x: 0, y: 0, w: l.trim.w, h: l.trim.h }
+
+      const el: Element = {
+        kind: 'static',
+        id: 'overflow_block',
+        page: 'front',
+        // box.h (10) is far shorter than a single line at this lineHeight
+        // (60), so blockHeight - box.h is deeply negative (-50) for valign
+        // 'bottom'. Unclamped, that pushes the block 50pt upward out of the
+        // box; clamped, the block starts flush with the top of the box.
+        box: { x: 50, y: 100, w: 150, h: 10 },
+        text: 'AB',
+        style: {
+          fontId: 'value',
+          size: 18,
+          color: { space: 'rgb', r: 0, g: 0, b: 1 },
+          align: 'left',
+          valign: 'bottom',
+          fit: 'shrink',
+          minSize: 18,
+          lineHeight: 60,
+          maxLines: 1,
+          firstLineIndent: 0,
+        },
+      }
+
+      drawCard({
+        page,
+        embedded: embedded!,
+        layout: l,
+        elements: [el],
+        fonts,
+        row: { index: 1, values: {} },
+        cell,
+        photo: null,
+      })
+
+      const raster = await rasterize(new Uint8Array(await out.save()), 0, 72)
+      let topRow: number | null = null
+      outer: for (let y = 0; y < raster.height; y++) {
+        for (let x = 0; x < raster.width; x++) {
+          const i = (y * raster.width + x) * 4
+          if ((raster.rgba[i + 3] ?? 0) === 0) continue
+          const r = raster.rgba[i] ?? 0
+          const g = raster.rgba[i + 1] ?? 0
+          const b = raster.rgba[i + 2] ?? 0
+          if (b > 200 && r < 80 && g < 80) {
+            topRow = y
+            break outer
+          }
+        }
+      }
+      expect(topRow).not.toBeNull()
+
+      const boxY = cell.y - l.trim.y + el.box.y
+      // A clamped offset of 0 still lets the line's ascent draw a little
+      // above box.y (bounded by the font's ascent, a few pt for an 18pt
+      // font); an unclamped offset of box.h - blockHeight (-50) would push
+      // the block a further 50pt above that. The threshold sits strictly
+      // between the two predictions.
+      expect(topRow!).toBeGreaterThan(boxY - 15)
     })
   })
 })

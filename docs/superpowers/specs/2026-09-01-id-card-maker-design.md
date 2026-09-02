@@ -370,6 +370,8 @@ The operator expressed each budget as a run of `x` characters in the template. E
 
 **The budget is points, not characters.** Lowercase `x` sits at roughly the average glyph width, so 25 of them approximate 25 mixed-case characters. Capitals in Arial average about 0.68em, so the Name box holds only about 18 upper-case characters. Schools that submit names in capitals will exercise shrink-to-fit heavily, and the preflight warning threshold should be set with that in mind.
 
+**Deriving a layout's `box.y` from these measurements.** The tabulated `y` values above are glyph-top measurements taken with `pdftotext -bbox` — the top of each field's printed text, not a baseline and not directly usable as a layout's `box.y` (see the `box.y` contract documented on `elementSchema` in `src/layout.ts`). A layout's `box.y` is derived from them as `measured_y + 6.093 − ascent(overlay font at 9pt)`, where 6.093 is the template's own measured offset from that glyph-top to its true baseline at 9pt; for Liberation Sans or Arial as the overlay font at 9pt, `ascent(9) = 8.1475pt`, so in practice `box.y = measured_y − 2.0545`. The table above is left as the raw measurement; do not read it directly into a layout's `box.y`.
+
 **Placed images**
 
 | Object | x | y | w | h | aspect | role |
