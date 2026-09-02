@@ -1,7 +1,7 @@
 import { rgb } from 'pdf-lib'
 import type { PDFFont, PDFPage } from 'pdf-lib'
 import { cellRect, type Grid } from './grid.js'
-import { toPdfRect, type Rect } from './units.js'
+import { flipY, toPdfRect, type Rect } from './units.js'
 
 export type FlipAxis = 'long-edge' | 'short-edge'
 
@@ -30,24 +30,62 @@ export function sheetCount(total: number, perSheet: number): number {
 const MARK_LEN = 6
 const MARK_GAP = 2
 
-/** Crop marks sit in the gutter and margin, never inside the card. */
-export function drawCropMarks(page: PDFPage, grid: Grid, sheet: { w: number; h: number }): void {
-  const colour = rgb(0, 0, 0)
-  const line = (r: Rect) => {
-    const p = toPdfRect(r, sheet.h)
-    page.drawRectangle({ x: p.x, y: p.y, width: p.w, height: p.h, color: colour })
-  }
+/**
+ * Rectangles for every crop mark on a sheet, in top-left points.
+ *
+ * A mark never enters a card. The room available differs by edge: an outer
+ * edge can use the whole margin, while two cards sharing a gutter get half of
+ * it each. Where there is no room — butt-cut, where adjacent cards touch — the
+ * interior marks are omitted rather than printed onto a neighbour's artwork.
+ */
+export function cropMarkRects(grid: Grid, sheet: { w: number; h: number }): Rect[] {
+  const rects: Rect[] = []
+
+  // Room available beyond a card edge before hitting the sheet edge (outer)
+  // or the midpoint of the gutter shared with the next card (interior).
+  const room = (isOuter: boolean, margin: number): number => (isOuter ? margin : grid.gutter / 2)
 
   for (let i = 0; i < grid.perSheet; i++) {
     const c = cellRect(grid, i)
-    for (const x of [c.x, c.x + c.w]) {
-      line({ x: x - 0.25, y: c.y - MARK_GAP - MARK_LEN, w: 0.5, h: MARK_LEN })
-      line({ x: x - 0.25, y: c.y + c.h + MARK_GAP, w: 0.5, h: MARK_LEN })
+    const col = i % grid.cols
+    const row = Math.floor(i / grid.cols)
+
+    const lenAbove = Math.min(MARK_LEN, room(row === 0, grid.originY) - MARK_GAP)
+    const lenBelow = Math.min(MARK_LEN, room(row === grid.rows - 1, grid.originY) - MARK_GAP)
+    const lenLeft = Math.min(MARK_LEN, room(col === 0, grid.originX) - MARK_GAP)
+    const lenRight = Math.min(MARK_LEN, room(col === grid.cols - 1, grid.originX) - MARK_GAP)
+
+    if (lenAbove > 0) {
+      for (const x of [c.x, c.x + c.w]) {
+        rects.push({ x: x - 0.25, y: c.y - MARK_GAP - lenAbove, w: 0.5, h: lenAbove })
+      }
     }
-    for (const y of [c.y, c.y + c.h]) {
-      line({ x: c.x - MARK_GAP - MARK_LEN, y: y - 0.25, w: MARK_LEN, h: 0.5 })
-      line({ x: c.x + c.w + MARK_GAP, y: y - 0.25, w: MARK_LEN, h: 0.5 })
+    if (lenBelow > 0) {
+      for (const x of [c.x, c.x + c.w]) {
+        rects.push({ x: x - 0.25, y: c.y + c.h + MARK_GAP, w: 0.5, h: lenBelow })
+      }
     }
+    if (lenLeft > 0) {
+      for (const y of [c.y, c.y + c.h]) {
+        rects.push({ x: c.x - MARK_GAP - lenLeft, y: y - 0.25, w: lenLeft, h: 0.5 })
+      }
+    }
+    if (lenRight > 0) {
+      for (const y of [c.y, c.y + c.h]) {
+        rects.push({ x: c.x + c.w + MARK_GAP, y: y - 0.25, w: lenRight, h: 0.5 })
+      }
+    }
+  }
+
+  return rects
+}
+
+/** Crop marks sit in the gutter and margin, never inside the card. */
+export function drawCropMarks(page: PDFPage, grid: Grid, sheet: { w: number; h: number }): void {
+  const colour = rgb(0, 0, 0)
+  for (const r of cropMarkRects(grid, sheet)) {
+    const p = toPdfRect(r, sheet.h)
+    page.drawRectangle({ x: p.x, y: p.y, width: p.w, height: p.h, color: colour })
   }
 }
 
@@ -57,7 +95,7 @@ export function drawCropMarks(page: PDFPage, grid: Grid, sheet: { w: number; h: 
  * back sheet ruins a full sheet of cards.
  *
  * Positioned in top-left points, like every other drawing site in this
- * codebase, and converted to PDF's bottom-left space through `toPdfRect` —
+ * codebase, and converted to PDF's bottom-left space through `flipY` —
  * this module has no bespoke Y arithmetic of its own.
  */
 export function drawSlug(page: PDFPage, text: string, sheet: { w: number; h: number }, font: PDFFont, margin: number): void {
@@ -69,6 +107,6 @@ export function drawSlug(page: PDFPage, text: string, sheet: { w: number; h: num
   const bandTop = sheet.h - margin
   const centred = bandTop + margin / 2 - size / 2
   const topY = Math.min(centred, sheet.h - 2 - size)
-  const p = toPdfRect({ x: margin, y: topY, w: 0, h: size }, sheet.h)
-  page.drawText(text, { x: p.x, y: p.y, size, font, color: rgb(0.4, 0.4, 0.4) })
+  const y = flipY(sheet.h, topY + size)
+  page.drawText(text, { x: margin, y, size, font, color: rgb(0.4, 0.4, 0.4) })
 }
