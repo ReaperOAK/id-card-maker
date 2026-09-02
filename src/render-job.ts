@@ -55,8 +55,19 @@ async function buildSide(
   const elements = side === 'front' ? args.layout.front : args.layout.back
   const axis = args.flipAxis ?? 'long-edge'
 
+  // Only embed photos this side can actually draw. A standing photo library
+  // shared across jobs can hold thousands of ids that never appear in this
+  // job's rows, and a side with no photo element (a text-only back, say)
+  // can't draw any photo at all — embedding them anyway bloats the PDF with
+  // pictures of students who were never in this print run.
   const images = new Map<string, PDFImage>()
-  for (const [id, entry] of photoCache) images.set(id, await embedPhoto(doc, entry))
+  const hasPhotoElement = elements.some((el) => el.kind === 'photo')
+  if (hasPhotoElement) {
+    const rowIds = new Set(args.rows.map((row) => normaliseId(row.values[args.layout.idColumn] ?? '')))
+    for (const [id, entry] of photoCache) {
+      if (rowIds.has(id)) images.set(id, await embedPhoto(doc, entry))
+    }
+  }
 
   const total = sheetCount(args.rows.length, grid.perSheet)
   for (let s = 0; s < total; s++) {
