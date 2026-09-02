@@ -27,3 +27,13 @@ export function toPdfRect(r: Rect, pageHeight: number): Rect {
 export function fromPdfRect(r: Rect, pageHeight: number): Rect {
   return toPdfRect(r, pageHeight)
 }
+
+/**
+ * Flip a single top-left-origin Y coordinate into PDF's bottom-left-origin
+ * space. For placing a baseline at distance `dy` below the top of a page-space
+ * box: `flipY(pageHeight, boxTopY + dy)`. Kept here, alongside toPdfRect, so
+ * this stays the only place in the codebase permitted to flip Y.
+ */
+export function flipY(pageHeight: number, y: number): number {
+  return pageHeight - y
+}
