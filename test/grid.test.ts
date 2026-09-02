@@ -19,18 +19,24 @@ describe('solveGrid', () => {
       const g = solveGrid({ sheet: SHEET, card, gutter: mm(3), minMargin: mm(5) })
       const usedW = g.cols * g.cellW + (g.cols - 1) * g.gutter
       const usedH = g.rows * g.cellH + (g.rows - 1) * g.gutter
-      expect(g.originX).toBeCloseTo((SHEET.w - usedW) / 2, 6)
-      expect(g.originY).toBeCloseTo((SHEET.h - usedH) / 2, 6)
+      // The property, not the formula: what is left of the block equals what is
+      // right of it. Duplex back sheets are produced by mirroring cell positions,
+      // so any asymmetry offsets every card on every back sheet.
+      expect(SHEET.w - g.originX - usedW).toBeCloseTo(g.originX, 6)
+      expect(SHEET.h - g.originY - usedH).toBeCloseTo(g.originY, 6)
       expect(g.originX).toBeGreaterThanOrEqual(mm(5) - 1e-6)
       expect(g.originY).toBeGreaterThanOrEqual(mm(5) - 1e-6)
     }
   })
 
   it('rotates the card when rotation yields more cards per sheet', () => {
-    // 140 x 90 landscape: 9 x 9 = 81 upright, but 140 tall gives 14 x 6 = 84.
     const g = solveGrid({ sheet: SHEET, card: { w: 140, h: 90 }, gutter: 0, minMargin: 0 })
-    const upright = Math.floor(SHEET.w / 140) * Math.floor(SHEET.h / 90)
-    expect(g.perSheet).toBeGreaterThanOrEqual(upright)
+    // 140x90 upright fits 9x9 = 81. Turned, 90 wide by 140 tall, it fits
+    // 14x6 = 84 — so a solver that never rotates loses 3 cards per sheet.
+    expect(g.rotated).toBe(true)
+    expect(g.cols).toBe(14)
+    expect(g.rows).toBe(6)
+    expect(g.perSheet).toBe(84)
   })
 
   it('reduces the gutter before losing a column', () => {
