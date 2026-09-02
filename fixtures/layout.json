@@ -8,8 +8,7 @@
   "photoTargetDpi": 200,
   "idColumn": "ID No.",
   "fonts": {
-    "value": "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "label": "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
+    "value": "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
   },
   "front": [
     { "kind": "text", "id": "id_no", "page": "front", "box": { "x": 59.77, "y": 92.04, "w": 58.5, "h": 10.555 },

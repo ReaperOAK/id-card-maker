@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PT_PER_IN, PT_PER_MM, fromPdfRect, inches, mm, toPdfRect } from '../src/units.js'
+import { PT_PER_IN, PT_PER_MM, flipY, fromPdfRect, inches, mm, toPdfRect } from '../src/units.js'
 
 describe('units', () => {
   it('converts inches and millimetres to points', () => {
@@ -14,6 +14,19 @@ describe('units', () => {
     // A 10pt-tall box whose top sits 20pt below the top of a 100pt page
     // has its bottom edge at 100 - 20 - 10 = 70 in PDF space.
     expect(toPdfRect({ x: 5, y: 20, w: 30, h: 10 }, 100)).toEqual({ x: 5, y: 70, w: 30, h: 10 })
+  })
+
+  it('flips a single top-left-origin Y coordinate into PDF bottom-left space (Minor 8)', () => {
+    // A point 20pt below the top of a 100pt-tall page sits 80pt above the
+    // bottom of the page in PDF space — the same arithmetic toPdfRect uses,
+    // pinned directly since flipY is one of the two functions (alongside
+    // toPdfRect) the codebase's coordinate discipline rests on.
+    expect(flipY(100, 20)).toBe(80)
+    // The top of the page (y = 0 in top-left space) sits at the full page
+    // height in PDF space.
+    expect(flipY(216, 0)).toBe(216)
+    // The bottom of the page (y = pageHeight in top-left space) sits at 0.
+    expect(flipY(216, 216)).toBe(0)
   })
 
   it('round-trips any rect through both flips', () => {

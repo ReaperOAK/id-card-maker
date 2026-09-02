@@ -2,7 +2,7 @@ import { mkdtemp, copyFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildPhotoIndex, effectiveDpi } from '../src/photos.js'
+import { buildPhotoIndex, effectiveDpi, PhotoDirectoryNotFoundError } from '../src/photos.js'
 
 describe('buildPhotoIndex', () => {
   it('matches filenames to ids despite leading zeros', async () => {
@@ -70,6 +70,16 @@ describe('buildPhotoIndex', () => {
       expect(claimants).toHaveLength(2)
       expect(claimants).toContain(join(dir, '101.jpg'))
       expect(claimants).toContain(join(dir, '0101.jpg'))
+
+      // buildPhotoIndex sorts filenames before indexing, so "first file wins"
+      // means alphabetically first ('0101.jpg' < '101.jpg'). The CLI's
+      // collision message promises the operator "first file wins" — if the
+      // winner ever silently flipped to the other file, that message would
+      // become a lie and a student would get someone else's face on their
+      // card, so pin which path actually won rather than only that a winner
+      // exists (Minor 9).
+      const alphabeticallyFirst = [join(dir, '101.jpg'), join(dir, '0101.jpg')].sort()[0]!
+      expect(byId.get('101')!.path).toBe(alphabeticallyFirst)
     })
 
     it('reports no collision for a single file', async () => {
@@ -79,6 +89,22 @@ describe('buildPhotoIndex', () => {
 
       expect(collisions.size).toBe(0)
     })
+
+    it('returns a genuinely empty index for a directory that exists but holds no photos', async () => {
+      // `dir` was just created by beforeEach and nothing has been written into
+      // it. This must NOT throw — only a missing directory is an error; an
+      // empty one is a legitimate (if unusual) state.
+      const { byId, unmatched, collisions } = await buildPhotoIndex(dir)
+      expect(byId.size).toBe(0)
+      expect(unmatched).toHaveLength(0)
+      expect(collisions.size).toBe(0)
+    })
+  })
+
+  it('throws PhotoDirectoryNotFoundError, naming the path, for a directory that does not exist', async () => {
+    const missing = join(await mkdtemp(join(tmpdir(), 'photos-test-')), 'does-not-exist')
+    await expect(buildPhotoIndex(missing)).rejects.toBeInstanceOf(PhotoDirectoryNotFoundError)
+    await expect(buildPhotoIndex(missing)).rejects.toThrow(missing)
   })
 })
 

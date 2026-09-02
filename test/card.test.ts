@@ -29,6 +29,57 @@ describe('applyTransform', () => {
   })
 })
 
+describe('applyTransform date (F4)', () => {
+  it('parses DD.MM.YYYY, the shape cellText emits for a genuine Excel Date cell', () => {
+    expect(applyTransform('12.04.2010', { column: 'DOB', transform: 'date', format: 'YYYY-MM-DD' })).toBe(
+      '2010-04-12',
+    )
+  })
+
+  it('parses DD/MM/YYYY', () => {
+    expect(applyTransform('12/04/2010', { column: 'DOB', transform: 'date', format: 'YYYY-MM-DD' })).toBe(
+      '2010-04-12',
+    )
+  })
+
+  it('parses DD-MM-YYYY', () => {
+    expect(applyTransform('12-04-2010', { column: 'DOB', transform: 'date', format: 'YYYY-MM-DD' })).toBe(
+      '2010-04-12',
+    )
+  })
+
+  it('parses ISO YYYY-MM-DD', () => {
+    expect(applyTransform('2010-04-12', { column: 'DOB', transform: 'date', format: 'DD/MM/YYYY' })).toBe(
+      '12/04/2010',
+    )
+  })
+
+  it('substitutes each format token (DD, MM, YYYY, YY)', () => {
+    expect(applyTransform('05.09.2010', { column: 'DOB', transform: 'date', format: 'DD' })).toBe('05')
+    expect(applyTransform('05.09.2010', { column: 'DOB', transform: 'date', format: 'MM' })).toBe('09')
+    expect(applyTransform('05.09.2010', { column: 'DOB', transform: 'date', format: 'YYYY' })).toBe('2010')
+    expect(applyTransform('05.09.2010', { column: 'DOB', transform: 'date', format: 'YY' })).toBe('10')
+    // A format mixing every token with literal separators, to prove YYYY is
+    // consumed whole rather than as two overlapping YY matches.
+    expect(applyTransform('05.09.2010', { column: 'DOB', transform: 'date', format: 'YYYY/YY-MM.DD' })).toBe(
+      '2010/10-09.05',
+    )
+  })
+
+  it('defaults to DD.MM.YYYY when format is absent', () => {
+    expect(applyTransform('2010-04-12', { column: 'DOB', transform: 'date' })).toBe('12.04.2010')
+  })
+
+  it('returns an unparseable value unchanged rather than throwing or emitting a wrong date', () => {
+    expect(applyTransform('not a date', { column: 'DOB', transform: 'date', format: 'YYYY-MM-DD' })).toBe(
+      'not a date',
+    )
+    expect(applyTransform('', { column: 'DOB', transform: 'date' })).toBe('')
+    // Out-of-range month/day: shape matches but the value is not a real date.
+    expect(applyTransform('32.13.2010', { column: 'DOB', transform: 'date' })).toBe('32.13.2010')
+  })
+})
+
 describe('resolveText', () => {
   it('flags an empty required field as missing', () => {
     const r = resolveText({ index: 2, values: { Name: '' } }, { column: 'Name' })

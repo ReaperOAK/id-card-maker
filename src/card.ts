@@ -36,12 +36,86 @@ export interface DrawCardResult {
   missing: string[]
 }
 
+/**
+ * Parsed calendar date, used only by the 'date' transform below. Deliberately
+ * not a `Date` object: nothing here needs to reason about time zones, DST, or
+ * "now" — only to read three numbers back out in a different order — and a
+ * `Date` would add implicit local-time interpretation for no benefit.
+ */
+interface ParsedDate {
+  day: number
+  month: number
+  year: number
+}
+
+/**
+ * Every shape the 'date' transform accepts, tried in this order. These cover
+ * what `cellText` in data.ts emits for a genuine Excel Date cell
+ * (`DD.MM.YYYY`) and the formats schools typically type by hand.
+ */
+const DATE_INPUT_PATTERNS: { re: RegExp; dayGroup: number; monthGroup: number; yearGroup: number }[] = [
+  { re: /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/, dayGroup: 1, monthGroup: 2, yearGroup: 3 }, // DD.MM.YYYY
+  { re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, dayGroup: 1, monthGroup: 2, yearGroup: 3 }, // DD/MM/YYYY
+  { re: /^(\d{1,2})-(\d{1,2})-(\d{4})$/, dayGroup: 1, monthGroup: 2, yearGroup: 3 }, // DD-MM-YYYY
+  { re: /^(\d{4})-(\d{1,2})-(\d{1,2})$/, dayGroup: 3, monthGroup: 2, yearGroup: 1 }, // ISO YYYY-MM-DD
+]
+
+/** Returns null, rather than throwing, for anything that isn't one of the accepted shapes. */
+function parseDateValue(value: string): ParsedDate | null {
+  const trimmed = value.trim()
+  for (const { re, dayGroup, monthGroup, yearGroup } of DATE_INPUT_PATTERNS) {
+    const m = re.exec(trimmed)
+    if (!m) continue
+    const day = Number(m[dayGroup])
+    const month = Number(m[monthGroup])
+    const year = Number(m[yearGroup])
+    if (month < 1 || month > 12 || day < 1 || day > 31) continue
+    return { day, month, year }
+  }
+  return null
+}
+
+/**
+ * Substitutes DD/MM/YYYY/YY tokens for literal separators. YYYY is tried
+ * before YY in the alternation so a format string's "YYYY" is consumed whole
+ * by one match rather than as two adjacent "YY" matches.
+ */
+function formatDateValue(date: ParsedDate, format: string): string {
+  const dd = String(date.day).padStart(2, '0')
+  const mm = String(date.month).padStart(2, '0')
+  const yyyy = String(date.year).padStart(4, '0')
+  const yy = yyyy.slice(-2)
+  return format.replace(/YYYY|MM|DD|YY/g, (token) => {
+    switch (token) {
+      case 'DD':
+        return dd
+      case 'MM':
+        return mm
+      case 'YYYY':
+        return yyyy
+      case 'YY':
+        return yy
+      default:
+        return token
+    }
+  })
+}
+
 export function applyTransform(value: string, binding: Binding): string {
   switch (binding.transform) {
     case 'upper':
       return value.toUpperCase()
     case 'title':
       return value.replace(/\S+/g, (w) => w[0]!.toUpperCase() + w.slice(1).toLowerCase())
+    case 'date': {
+      const parsed = parseDateValue(value)
+      // A value that doesn't parse is returned unchanged rather than thrown or
+      // reformatted into something wrong: a mangled date printed on a card is
+      // worse than an unformatted one, and preflight already reports fields
+      // that don't fit their box.
+      if (!parsed) return value
+      return formatDateValue(parsed, binding.format ?? 'DD.MM.YYYY')
+    }
     default:
       return value
   }

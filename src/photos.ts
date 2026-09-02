@@ -58,6 +58,19 @@ export interface PhotoIndex {
   collisions: Map<string, string[]>
 }
 
+/**
+ * Thrown by `buildPhotoIndex` when `dir` does not exist. Kept distinct from
+ * other `readdir` failures (and from a legitimately empty directory, which is
+ * not an error) so a caller can tell "typo'd path" apart from "no photos yet"
+ * instead of both silently producing an empty index.
+ */
+export class PhotoDirectoryNotFoundError extends Error {
+  constructor(public readonly dir: string) {
+    super(`Photo directory not found: ${dir}`)
+    this.name = 'PhotoDirectoryNotFoundError'
+  }
+}
+
 export async function buildPhotoIndex(dir: string): Promise<PhotoIndex> {
   const byId = new Map<string, PhotoEntry>()
   const unmatched: PhotoEntry[] = []
@@ -66,8 +79,15 @@ export async function buildPhotoIndex(dir: string): Promise<PhotoIndex> {
   let names: string[]
   try {
     names = await readdir(dir)
-  } catch {
-    return { byId, unmatched, collisions }
+  } catch (err) {
+    // ENOENT (missing directory) is surfaced as its own typed error so a
+    // caller can report it distinctly. A legitimate empty directory reaches
+    // readdir successfully and falls through to the loop below with an
+    // empty `names`, producing a genuinely empty index rather than an error.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new PhotoDirectoryNotFoundError(dir)
+    }
+    throw err
   }
 
   // Sort so "first file wins on collision" is deterministic rather than dependent

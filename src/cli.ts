@@ -6,7 +6,7 @@ import { Command } from 'commander'
 import { loadRows } from './data.js'
 import type { FlipAxis } from './impose.js'
 import { parseLayout } from './layout.js'
-import { buildPhotoIndex } from './photos.js'
+import { buildPhotoIndex, PhotoDirectoryNotFoundError, type PhotoIndex } from './photos.js'
 import { renderJob } from './render-job.js'
 import { summarise } from './preflight.js'
 import { detectTrim } from './trim.js'
@@ -52,13 +52,40 @@ program
   .action(async (opts: { layout: string; data: string; photos?: string; out: string; name?: string; flip: string; force: boolean }) => {
     const flipAxis = parseFlipAxis(opts.flip)
     const layoutPath = resolve(opts.layout)
-    const layout = parseLayout(JSON.parse(await readFile(layoutPath, 'utf8')))
+    const parsedLayout = parseLayout(JSON.parse(await readFile(layoutPath, 'utf8')))
     const base = dirname(layoutPath)
 
+    // Font paths must resolve against the layout file's own directory, exactly
+    // like templateFront/templateBack below — a project is a self-contained
+    // folder that can be copied to a pendrive, and that only holds if every
+    // relative path in the layout is read the same way. `resolve` leaves an
+    // already-absolute path (e.g. the fixture's /usr/share/fonts/... entries)
+    // untouched.
+    const layout = {
+      ...parsedLayout,
+      fonts: Object.fromEntries(Object.entries(parsedLayout.fonts).map(([id, p]) => [id, resolve(base, p)])),
+    }
+
     const { rows } = await loadRows(opts.data)
-    const photoIndex = opts.photos
-      ? await buildPhotoIndex(opts.photos)
-      : { byId: new Map(), unmatched: [], collisions: new Map() }
+    if (rows.length === 0) {
+      throw new Error(
+        `${opts.data} has no data rows. Nothing to render — check the spreadsheet was exported correctly.`,
+      )
+    }
+
+    let photoIndex: PhotoIndex
+    if (opts.photos) {
+      try {
+        photoIndex = await buildPhotoIndex(opts.photos)
+      } catch (err) {
+        if (err instanceof PhotoDirectoryNotFoundError) {
+          throw new Error(`--photos "${opts.photos}" does not exist. Check the path and try again.`)
+        }
+        throw err
+      }
+    } else {
+      photoIndex = { byId: new Map(), unmatched: [], collisions: new Map() }
+    }
 
     // Two photo files normalising to the same id means a student could silently
     // receive someone else's face on their card. buildPhotoIndex already picks a
@@ -89,8 +116,11 @@ program
 
     await mkdir(opts.out, { recursive: true })
     await writeFile(join(opts.out, 'job-fronts.pdf'), result.frontPdf)
-    if (result.backPdf) await writeFile(join(opts.out, 'job-backs.pdf'), result.backPdf)
     console.log(`wrote ${join(opts.out, 'job-fronts.pdf')}`)
+    if (result.backPdf) {
+      await writeFile(join(opts.out, 'job-backs.pdf'), result.backPdf)
+      console.log(`wrote ${join(opts.out, 'job-backs.pdf')}`)
+    }
   })
 
 // Only run the CLI when this file is the process entry point, not merely

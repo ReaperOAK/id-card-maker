@@ -64,9 +64,11 @@ export function fitText(text: string, style: TextStyle, boxWidth: number, font: 
   if (trimmed === '') return { lines: [''], size: style.size, overflow: false }
 
   // A non-positive box cannot fit anything. Return through the overflow path
-  // rather than letting wrap() spin on a negative width budget. Slice to
-  // maxLines like the other overflow paths, so a caller drawing r.lines[i] at
-  // i * lineHeight never draws past the bottom of the box.
+  // rather than letting wrap() spin on a negative width budget. The
+  // `.slice(0, style.maxLines)` below is a no-op here in practice — this
+  // array always holds exactly one element and maxLines is always at least
+  // 1 (see textStyleSchema) — kept only for shape-symmetry with the other
+  // overflow return sites, which do slice a genuinely longer array.
   if (boxWidth <= 0) {
     return { lines: [trimmed].slice(0, style.maxLines), size: style.minSize, overflow: true }
   }
