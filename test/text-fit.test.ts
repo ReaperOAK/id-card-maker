@@ -90,11 +90,26 @@ describe('fitText', () => {
   })
 })
 
+// Load-bearing against real regressions: "narrower than one character" and the
+// w = -5 case pin the hard-break floor and the non-positive-box guard
+// respectively; "re-enters the hard break on every line" pins the floor across
+// multiple lines. The remaining cases are characterisation of degenerate input
+// and would pass against the pre-fix code.
 describe('fitText termination', () => {
   it('returns rather than hanging when the line is narrower than one character', () => {
     const r = fitText('AAAA', style({ maxLines: 2 }), 0.5, arial)
     expect(r.overflow).toBe(true)
     expect(r.lines.length).toBeGreaterThan(0)
+  })
+
+  it('re-enters the hard break on every line without hanging', () => {
+    // firstLineIndent is 0, so every line shares the same sub-glyph budget and
+    // the hard-break floor is exercised repeatedly — not just on line one, which
+    // is the only case the indent test reaches.
+    const r = fitText('AAAA BBBB CCCC', style({ maxLines: 3, firstLineIndent: 0 }), 0.5, arial)
+    expect(r.overflow).toBe(true)
+    expect(r.lines.length).toBeGreaterThan(0)
+    expect(r.lines.length).toBeLessThanOrEqual(3)
   })
 
   it('returns rather than throwing for a non-positive box', () => {
