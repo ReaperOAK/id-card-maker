@@ -13,20 +13,22 @@ export interface PhotoEntry {
 
 const SUPPORTED = new Set(['.jpg', '.jpeg', '.png'])
 
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
 /** Read IHDR width/height, after verifying the PNG signature and first chunk type. */
-function pngSize(b: Buffer, path: string): { width: number; height: number } {
+function pngSize(b: Uint8Array, path: string): { width: number; height: number } {
   const truncatedOrNotPng = (): Error =>
     new Error(`pngSize: ${path} is truncated or not a PNG`)
   if (b.length < 24) throw truncatedOrNotPng()
-  if (!b.subarray(0, 8).equals(PNG_SIGNATURE)) throw truncatedOrNotPng()
-  if (b.toString('ascii', 12, 16) !== 'IHDR') throw truncatedOrNotPng()
-  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) }
+  if (!PNG_SIGNATURE.every((v, i) => b[i] === v)) throw truncatedOrNotPng()
+  if (String.fromCharCode(...b.subarray(12, 16)) !== 'IHDR') throw truncatedOrNotPng()
+  const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  return { width: view.getUint32(16), height: view.getUint32(20) }
 }
 
 /** Walk JPEG segment markers to the first SOF frame header, which carries the dimensions. */
-function jpegSize(b: Buffer, path: string): { width: number; height: number } {
+function jpegSize(b: Uint8Array, path: string): { width: number; height: number } {
+  const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
   let i = 2
   while (i + 1 < b.length) {
     if (b[i] !== 0xff) {
@@ -39,11 +41,11 @@ function jpegSize(b: Buffer, path: string): { width: number; height: number } {
       continue
     }
     if (i + 3 >= b.length) break
-    const len = b.readUInt16BE(i + 2)
+    const len = view.getUint16(i + 2)
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
     if (isSof) {
       if (i + 8 >= b.length) break
-      return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) }
+      return { height: view.getUint16(i + 5), width: view.getUint16(i + 7) }
     }
     if (len < 2) break
     i += 2 + len
@@ -94,10 +96,7 @@ export async function buildPhotoIndex(dir: string, fs: FileSystem): Promise<Phot
     if (!SUPPORTED.has(ext)) continue
     const path = joinPath(dir, name)
     const bytes = await fs.readFile(path)
-    // pngSize/jpegSize use Buffer-specific byte-reading methods; wrap the
-    // FileSystem's plain Uint8Array in a zero-copy Buffer view to reach them.
-    const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    const size = ext === '.png' ? pngSize(buf, path) : jpegSize(buf, path)
+    const size = ext === '.png' ? pngSize(bytes, path) : jpegSize(bytes, path)
     const id = normaliseId(stem(name))
     const entry: PhotoEntry = { path, id, ...size }
     if (id === '') {

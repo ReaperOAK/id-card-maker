@@ -107,6 +107,19 @@ describe('buildPhotoIndex', () => {
     await expect(buildPhotoIndex(missing, nodeFs)).rejects.toBeInstanceOf(PhotoDirectoryNotFoundError)
     await expect(buildPhotoIndex(missing, nodeFs)).rejects.toThrow(missing)
   })
+
+  it('needs no Buffer global — runs as it would inside a webview', async () => {
+    const saved = globalThis.Buffer
+    // @ts-expect-error deliberately removing a Node global
+    delete globalThis.Buffer
+    try {
+      const { byId } = await buildPhotoIndex('fixtures/photos', nodeFs)
+      expect(byId.get('101')?.width).toBe(132)
+      expect(byId.get('101')?.height).toBe(172)
+    } finally {
+      globalThis.Buffer = saved
+    }
+  })
 })
 
 describe('effectiveDpi', () => {
