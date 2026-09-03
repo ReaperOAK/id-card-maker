@@ -13,7 +13,7 @@
 Task 2 verifies these and stops with BLOCKED if any is missing. Do not install system packages from inside a task.
 
 - Rust toolchain: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` (user-level, no sudo)
-- Linux dev machine: `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev`
+- Linux dev machine: `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential libssl-dev` (the Ayatana package — `libappindicator3-dev` conflicts with it on current Ubuntu-based systems)
 - Windows target machine: Visual Studio Build Tools with the C++ workload; WebView2 is preinstalled on Windows 10/11
 
 ## Global Constraints
