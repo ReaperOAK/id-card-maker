@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import type { FileSystem } from './io.js'
 
 export interface Row {
   /** 1-based row number in the source sheet, so error messages match what the operator sees. */
@@ -48,9 +49,17 @@ function cellText(value: ExcelJS.CellValue): string {
   return String(value).trim()
 }
 
-export async function loadRows(path: string): Promise<{ headers: string[]; rows: Row[] }> {
+export async function loadRows(path: string, fs: FileSystem): Promise<{ headers: string[]; rows: Row[] }> {
   const wb = new ExcelJS.Workbook()
-  await wb.xlsx.readFile(path)
+  const bytes = await fs.readFile(path)
+  // exceljs's typings say Buffer — but exceljs/index.d.ts declares its own
+  // module-local `Buffer extends ArrayBuffer` interface, which shadows
+  // Node's global Buffer inside that file. Casting to the ambient `Buffer`
+  // therefore does not structurally satisfy `load`'s parameter type, so the
+  // cast target is pulled from the call signature itself instead of naming
+  // "Buffer" directly. At runtime, exceljs hands the bytes straight to
+  // JSZip, which accepts a Uint8Array in both Node and the browser.
+  await wb.xlsx.load(bytes as unknown as Parameters<typeof wb.xlsx.load>[0])
   const ws = wb.worksheets[0]
   if (!ws) throw new Error(`loadRows: ${path} contains no worksheet`)
 

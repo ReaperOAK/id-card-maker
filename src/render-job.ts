@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import type { PDFImage } from 'pdf-lib'
 import { drawCard } from './card.js'
@@ -7,6 +6,7 @@ import { normaliseId } from './data.js'
 import { FontRegistry } from './fonts.js'
 import { cellRect, solveGrid, type Grid } from './grid.js'
 import { drawCropMarks, drawSlug, mirrorIndex, sheetCount, type FlipAxis } from './impose.js'
+import type { FileSystem } from './io.js'
 import type { Layout } from './layout.js'
 import type { PhotoEntry } from './photos.js'
 import { runPreflight, summarise, type Issue } from './preflight.js'
@@ -21,6 +21,7 @@ export interface RenderJobArgs {
   jobName: string
   /** When false, any blocking preflight issue aborts the job. */
   allowOverrides: boolean
+  fs: FileSystem
   flipAxis?: FlipAxis
   gutter?: number
   minMargin?: number
@@ -59,8 +60,8 @@ async function templatePageSize(templateBytes: Uint8Array): Promise<PageSize> {
   return { w: page.getWidth(), h: page.getHeight() }
 }
 
-async function embedPhoto(doc: PDFDocument, entry: PhotoEntry): Promise<PDFImage> {
-  const bytes = await readFile(entry.path)
+async function embedPhoto(doc: PDFDocument, entry: PhotoEntry, fs: FileSystem): Promise<PDFImage> {
+  const bytes = await fs.readFile(entry.path)
   return entry.path.toLowerCase().endsWith('.png') ? doc.embedPng(bytes) : doc.embedJpg(bytes)
 }
 
@@ -72,7 +73,7 @@ async function buildSide(
   photoCache: Map<string, PhotoEntry>,
 ): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
-  const fonts = await FontRegistry.load(args.layout.fonts, doc)
+  const fonts = await FontRegistry.load(args.layout.fonts, doc, args.fs)
   const slugFont = await doc.embedFont(StandardFonts.Helvetica)
   const [embedded] = await doc.embedPdf(templateBytes, [0])
   const elements = side === 'front' ? args.layout.front : args.layout.back
@@ -88,7 +89,7 @@ async function buildSide(
   if (hasPhotoElement) {
     const rowIds = new Set(args.rows.map((row) => normaliseId(row.values[args.layout.idColumn] ?? '')))
     for (const [id, entry] of photoCache) {
-      if (rowIds.has(id)) images.set(id, await embedPhoto(doc, entry))
+      if (rowIds.has(id)) images.set(id, await embedPhoto(doc, entry, args.fs))
     }
   }
 
@@ -124,7 +125,7 @@ async function buildSide(
  */
 export async function renderJob(args: RenderJobArgs): Promise<JobResult> {
   const fontDoc = await PDFDocument.create()
-  const fonts = await FontRegistry.load(args.layout.fonts, fontDoc)
+  const fonts = await FontRegistry.load(args.layout.fonts, fontDoc, args.fs)
   const issues = runPreflight({ layout: args.layout, rows: args.rows, photos: args.photos, fonts })
 
   const { blocking } = summarise(issues)

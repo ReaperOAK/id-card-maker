@@ -1,6 +1,6 @@
-import { readFile, readdir } from 'node:fs/promises'
-import { extname, join, parse } from 'node:path'
 import { normaliseId } from './data.js'
+import type { FileSystem } from './io.js'
+import { extname, joinPath, stem } from './paths.js'
 import type { Rect } from './units.js'
 
 export interface PhotoEntry {
@@ -71,36 +71,34 @@ export class PhotoDirectoryNotFoundError extends Error {
   }
 }
 
-export async function buildPhotoIndex(dir: string): Promise<PhotoIndex> {
+export async function buildPhotoIndex(dir: string, fs: FileSystem): Promise<PhotoIndex> {
   const byId = new Map<string, PhotoEntry>()
   const unmatched: PhotoEntry[] = []
   const collisions = new Map<string, string[]>()
 
-  let names: string[]
-  try {
-    names = await readdir(dir)
-  } catch (err) {
-    // ENOENT (missing directory) is surfaced as its own typed error so a
-    // caller can report it distinctly. A legitimate empty directory reaches
-    // readdir successfully and falls through to the loop below with an
-    // empty `names`, producing a genuinely empty index rather than an error.
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new PhotoDirectoryNotFoundError(dir)
-    }
-    throw err
+  // Checked explicitly, rather than catching a readDir rejection, so the
+  // Tauri implementation can behave identically without needing to match
+  // Node's ENOENT error code. A legitimate empty directory still exists and
+  // falls through to the loop below with an empty `names`, producing a
+  // genuinely empty index rather than an error.
+  if (!(await fs.exists(dir))) {
+    throw new PhotoDirectoryNotFoundError(dir)
   }
 
   // Sort so "first file wins on collision" is deterministic rather than dependent
-  // on filesystem readdir order.
-  names.sort()
+  // on filesystem readDir order.
+  const names = [...(await fs.readDir(dir))].sort()
 
   for (const name of names) {
-    const ext = extname(name).toLowerCase()
+    const ext = extname(name)
     if (!SUPPORTED.has(ext)) continue
-    const path = join(dir, name)
-    const bytes = await readFile(path)
-    const size = ext === '.png' ? pngSize(bytes, path) : jpegSize(bytes, path)
-    const id = normaliseId(parse(name).name)
+    const path = joinPath(dir, name)
+    const bytes = await fs.readFile(path)
+    // pngSize/jpegSize use Buffer-specific byte-reading methods; wrap the
+    // FileSystem's plain Uint8Array in a zero-copy Buffer view to reach them.
+    const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    const size = ext === '.png' ? pngSize(buf, path) : jpegSize(buf, path)
+    const id = normaliseId(stem(name))
     const entry: PhotoEntry = { path, id, ...size }
     if (id === '') {
       unmatched.push(entry)

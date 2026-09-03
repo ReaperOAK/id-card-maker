@@ -6,6 +6,7 @@ import { FontRegistry } from '../src/fonts.js'
 import { applyTransform, ascentAtSize, capHeightAtSize, drawCard, resolveText } from '../src/card.js'
 import type { Element, TextStyle } from '../src/layout.js'
 import { parseLayout } from '../src/layout.js'
+import { nodeFs } from '../src/node-io.js'
 import { rasterize } from '../src/raster.js'
 import { fitText } from '../src/text-fit.js'
 
@@ -98,6 +99,7 @@ describe('ascentAtSize', () => {
     const reg = await FontRegistry.load(
       { value: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf' },
       doc,
+      nodeFs,
     )
     const font = reg.get('value')
     // LiberationSans: unitsPerEm 2048, ascender 1854 => (1854/2048)*9 = 8.1475pt.
@@ -120,7 +122,7 @@ describe('drawCard', () => {
 
     const out = await PDFDocument.create()
     const page = out.addPage([400, 400])
-    const fonts = await FontRegistry.load(l.fonts, out)
+    const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
     const [embedded] = await out.embedPdf(templateBytes, [0])
 
     drawCard({
@@ -153,7 +155,7 @@ describe('drawCard', () => {
     const l = layout()
     const out = await PDFDocument.create()
     const page = out.addPage([400, 400])
-    const fonts = await FontRegistry.load(l.fonts, out)
+    const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
     const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
 
     const result = drawCard({
@@ -175,7 +177,7 @@ describe('drawCard', () => {
     const l = layout()
     const out = await PDFDocument.create()
     const page = out.addPage([400, 400])
-    const fonts = await FontRegistry.load(l.fonts, out)
+    const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
     const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
     const photo = await out.embedPng(Buffer.from(RED_PIXEL_PNG, 'base64'))
 
@@ -255,7 +257,7 @@ describe('drawCard', () => {
       const l = layout()
       const out = await PDFDocument.create()
       const page = out.addPage([400, 400])
-      const fonts = await FontRegistry.load(l.fonts, out)
+      const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
       const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
 
       drawCard({
@@ -325,7 +327,7 @@ describe('drawCard', () => {
       const l = layout()
       const out = await PDFDocument.create()
       const page = out.addPage([400, 400])
-      const fonts = await FontRegistry.load(l.fonts, out)
+      const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
       const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
       const cell = { x: 0, y: 0, w: l.trim.w, h: l.trim.h }
 
@@ -395,7 +397,7 @@ describe('drawCard', () => {
       const l = layout()
       const out = await PDFDocument.create()
       const page = out.addPage([400, 400])
-      const fonts = await FontRegistry.load(l.fonts, out)
+      const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
       const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
       const cell = { x: 0, y: 0, w: l.trim.w, h: l.trim.h }
 
@@ -468,7 +470,7 @@ describe('drawCard', () => {
       const l = layout()
       const out = await PDFDocument.create()
       const page = out.addPage([400, 400])
-      const fonts = await FontRegistry.load(l.fonts, out)
+      const fonts = await FontRegistry.load(l.fonts, out, nodeFs)
       const [embedded] = await out.embedPdf(new Uint8Array(readFileSync('fixtures/template.pdf')), [0])
       const cell = { x: 0, y: 0, w: l.trim.w, h: l.trim.h }
 

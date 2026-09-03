@@ -4,6 +4,7 @@ import { PDFDocument } from 'pdf-lib'
 import { cellRect, solveGrid } from '../src/grid.js'
 import { mirrorIndex } from '../src/impose.js'
 import { parseLayout } from '../src/layout.js'
+import { nodeFs } from '../src/node-io.js'
 import { buildPhotoIndex } from '../src/photos.js'
 import { renderJob } from '../src/render-job.js'
 import { rasterize } from '../src/raster.js'
@@ -35,7 +36,7 @@ describe('renderJob', () => {
       rows,
       photos: new Map(),
       jobName: 'Test Job',
-      allowOverrides: true,
+      allowOverrides: true, fs: nodeFs,
     })
 
     expect(result.cards).toBe(30)
@@ -58,7 +59,7 @@ describe('renderJob', () => {
         rows: [{ index: 2, values: { 'ID No.': '', Name: '' } }],
         photos: new Map(),
         jobName: 'Bad Job',
-        allowOverrides: false,
+        allowOverrides: false, fs: nodeFs,
       }),
     ).rejects.toThrow(/blocking/)
   })
@@ -70,11 +71,11 @@ describe('renderJob', () => {
     }))
     const one = await renderJob({
       layout: layout(), templateFront: new Uint8Array(readFileSync('fixtures/template.pdf')), templateBack: null,
-      rows: rows.slice(0, 1), photos: new Map(), jobName: 'J', allowOverrides: true,
+      rows: rows.slice(0, 1), photos: new Map(), jobName: 'J', allowOverrides: true, fs: nodeFs,
     })
     const many = await renderJob({
       layout: layout(), templateFront: new Uint8Array(readFileSync('fixtures/template.pdf')), templateBack: null,
-      rows, photos: new Map(), jobName: 'J', allowOverrides: true,
+      rows, photos: new Map(), jobName: 'J', allowOverrides: true, fs: nodeFs,
     })
     // 25 cards must not cost 25 copies of the artwork.
     expect(many.frontPdf.byteLength).toBeLessThan(one.frontPdf.byteLength * 4)
@@ -85,7 +86,7 @@ describe('renderJob', () => {
     const rows = [{ index: 2, values: { 'ID No.': '101', Name: 'Rahul Kumar', "Guardian's Name": 'R', Class: 'X', 'R.No.': '1', DOB: '01.01.2010', 'Contact No.': '1', Address: 'Park Street' } }]
     const result = await renderJob({
       layout: l, templateFront: new Uint8Array(readFileSync('fixtures/template.pdf')), templateBack: null,
-      rows, photos: new Map(), jobName: 'J', allowOverrides: true,
+      rows, photos: new Map(), jobName: 'J', allowOverrides: true, fs: nodeFs,
     })
     const raster = await rasterize(result.frontPdf, 0, 72)
 
@@ -145,7 +146,7 @@ describe('renderJob', () => {
       rows: [{ index: 2, values: { 'ID No.': '101', Name: 'Rahul Kumar' } }],
       photos: new Map(),
       jobName: 'Duplex',
-      allowOverrides: true,
+      allowOverrides: true, fs: nodeFs,
     })
     expect(result.backPdf).not.toBeNull()
 
@@ -202,7 +203,7 @@ describe('renderJob', () => {
     const rows = [{ index: 2, values: { 'ID No.': '101', Name: 'Rahul Kumar', "Guardian's Name": 'R', Class: 'X', 'R.No.': '1', DOB: '01.01.2010', 'Contact No.': '1', Address: 'Park Street' } }]
     const template = new Uint8Array(readFileSync('fixtures/template.pdf'))
 
-    const index = await buildPhotoIndex('fixtures/photos')
+    const index = await buildPhotoIndex('fixtures/photos', nodeFs)
     // "102" (fixtures/photos/0102.jpg) is a real photo in the index, but no
     // row above carries that id.
     const unusedPhoto = index.byId.get('102')
@@ -211,11 +212,11 @@ describe('renderJob', () => {
 
     const withUnusedPhoto = await renderJob({
       layout: layout(), templateFront: template, templateBack: null,
-      rows, photos, jobName: 'J', allowOverrides: true,
+      rows, photos, jobName: 'J', allowOverrides: true, fs: nodeFs,
     })
     const withoutPhoto = await renderJob({
       layout: layout(), templateFront: template, templateBack: null,
-      rows, photos: new Map(), jobName: 'J', allowOverrides: true,
+      rows, photos: new Map(), jobName: 'J', allowOverrides: true, fs: nodeFs,
     })
 
     // A real JPEG is several hundred bytes at minimum, so if the unused
@@ -248,7 +249,7 @@ describe('renderJob', () => {
         rows: [{ index: 2, values: { 'ID No.': '1' } }],
         photos: new Map(),
         jobName: 'Rotated',
-        allowOverrides: true,
+        allowOverrides: true, fs: nodeFs,
         gutter: 0,
         minMargin: 0,
       }),
@@ -268,7 +269,7 @@ describe('renderJob', () => {
         rows: [{ index: 2, values: { 'ID No.': '101', Name: 'A' } }],
         photos: new Map(),
         jobName: 'Bad front size',
-        allowOverrides: true,
+        allowOverrides: true, fs: nodeFs,
       }),
     ).rejects.toThrow(/page size/i)
   })
@@ -287,7 +288,7 @@ describe('renderJob', () => {
         rows: [{ index: 2, values: { 'ID No.': '101', Name: 'A' } }],
         photos: new Map(),
         jobName: 'Bad back size',
-        allowOverrides: true,
+        allowOverrides: true, fs: nodeFs,
       }),
     ).rejects.toThrow(/back/i)
   })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { findDuplicateIds, loadRows, normaliseHeader, normaliseId } from '../src/data.js'
+import { nodeFs } from '../src/node-io.js'
 
 describe('normaliseId', () => {
   it('strips case, punctuation and leading zeros', () => {
@@ -35,7 +36,7 @@ describe('normaliseHeader', () => {
 
 describe('loadRows', () => {
   it('reads every data row from an xlsx file', async () => {
-    const { headers, rows } = await loadRows('fixtures/students.xlsx')
+    const { headers, rows } = await loadRows('fixtures/students.xlsx', nodeFs)
     expect(headers).toContain('ID No.')
     expect(headers).toContain("Guardian's Name")
     expect(rows).toHaveLength(4)
@@ -44,14 +45,14 @@ describe('loadRows', () => {
   })
 
   it('returns an empty string for a blank cell rather than undefined', async () => {
-    const { rows } = await loadRows('fixtures/students.xlsx')
+    const { rows } = await loadRows('fixtures/students.xlsx', nodeFs)
     expect(rows[2]?.values['Blood Group']).toBe('')
   })
 })
 
 describe('findDuplicateIds', () => {
   it('reports ids appearing on more than one row', async () => {
-    const { rows } = await loadRows('fixtures/students.xlsx')
+    const { rows } = await loadRows('fixtures/students.xlsx', nodeFs)
     const dupes = findDuplicateIds(rows, 'ID No.')
     expect([...dupes.keys()]).toEqual(['102'])
     expect(dupes.get('102')).toEqual([3, 5])

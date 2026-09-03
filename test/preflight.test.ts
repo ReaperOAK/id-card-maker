@@ -3,6 +3,7 @@ import { PDFDocument } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { FontRegistry } from '../src/fonts.js'
 import { parseLayout } from '../src/layout.js'
+import { nodeFs } from '../src/node-io.js'
 import { runPreflight, summarise } from '../src/preflight.js'
 import type { PhotoEntry } from '../src/photos.js'
 
@@ -10,7 +11,7 @@ const layout = () => parseLayout(JSON.parse(readFileSync('fixtures/layout.json',
 let fonts: FontRegistry
 
 beforeAll(async () => {
-  fonts = await FontRegistry.load(layout().fonts, await PDFDocument.create())
+  fonts = await FontRegistry.load(layout().fonts, await PDFDocument.create(), nodeFs)
 })
 
 const photo = (id: string, width: number, height: number): PhotoEntry => ({ path: `${id}.jpg`, id, width, height })

@@ -2,6 +2,7 @@ import { PDFDocument } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { PDFFont } from 'pdf-lib'
 import { FontRegistry } from '../src/fonts.js'
+import { nodeFs } from '../src/node-io.js'
 import { fitText } from '../src/text-fit.js'
 import type { TextStyle } from '../src/layout.js'
 
@@ -11,7 +12,7 @@ let arial: PDFFont
 
 beforeAll(async () => {
   const doc = await PDFDocument.create()
-  const reg = await FontRegistry.load({ value: LIBERATION_SANS }, doc)
+  const reg = await FontRegistry.load({ value: LIBERATION_SANS }, doc, nodeFs)
   arial = reg.get('value')
 })
 

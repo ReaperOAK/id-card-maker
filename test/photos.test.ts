@@ -2,11 +2,12 @@ import { mkdtemp, copyFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { nodeFs } from '../src/node-io.js'
 import { buildPhotoIndex, effectiveDpi, PhotoDirectoryNotFoundError } from '../src/photos.js'
 
 describe('buildPhotoIndex', () => {
   it('matches filenames to ids despite leading zeros', async () => {
-    const { byId } = await buildPhotoIndex('fixtures/photos')
+    const { byId } = await buildPhotoIndex('fixtures/photos', nodeFs)
     expect(byId.has('101')).toBe(true)
     expect(byId.has('102')).toBe(true) // from 0102.jpg
     expect(byId.get('101')?.width).toBe(132)
@@ -14,12 +15,12 @@ describe('buildPhotoIndex', () => {
   })
 
   it('keeps files whose stem is not a usable id available for manual pairing', async () => {
-    const { byId } = await buildPhotoIndex('fixtures/photos')
+    const { byId } = await buildPhotoIndex('fixtures/photos', nodeFs)
     expect(byId.has('junk')).toBe(true)
   })
 
   it('produces no collisions entry when every fixture id is unique', async () => {
-    const { collisions } = await buildPhotoIndex('fixtures/photos')
+    const { collisions } = await buildPhotoIndex('fixtures/photos', nodeFs)
     expect(collisions.size).toBe(0)
   })
 
@@ -40,7 +41,7 @@ describe('buildPhotoIndex', () => {
       const path = join(dir, 'not-a-photo.png')
       await writeFile(path, Buffer.alloc(40, 0x41))
 
-      await expect(buildPhotoIndex(dir)).rejects.toThrow(path)
+      await expect(buildPhotoIndex(dir, nodeFs)).rejects.toThrow(path)
     })
 
     it('throws a named error, not a raw RangeError, for a truncated .png', async () => {
@@ -49,7 +50,7 @@ describe('buildPhotoIndex', () => {
 
       let caught: unknown
       try {
-        await buildPhotoIndex(dir)
+        await buildPhotoIndex(dir, nodeFs)
       } catch (err) {
         caught = err
       }
@@ -62,7 +63,7 @@ describe('buildPhotoIndex', () => {
       await copyFile('fixtures/photos/101.jpg', join(dir, '101.jpg'))
       await copyFile('fixtures/photos/101.jpg', join(dir, '0101.jpg'))
 
-      const { byId, collisions } = await buildPhotoIndex(dir)
+      const { byId, collisions } = await buildPhotoIndex(dir, nodeFs)
 
       expect(byId.has('101')).toBe(true)
       expect(collisions.has('101')).toBe(true)
@@ -85,7 +86,7 @@ describe('buildPhotoIndex', () => {
     it('reports no collision for a single file', async () => {
       await copyFile('fixtures/photos/101.jpg', join(dir, '101.jpg'))
 
-      const { collisions } = await buildPhotoIndex(dir)
+      const { collisions } = await buildPhotoIndex(dir, nodeFs)
 
       expect(collisions.size).toBe(0)
     })
@@ -94,7 +95,7 @@ describe('buildPhotoIndex', () => {
       // `dir` was just created by beforeEach and nothing has been written into
       // it. This must NOT throw — only a missing directory is an error; an
       // empty one is a legitimate (if unusual) state.
-      const { byId, unmatched, collisions } = await buildPhotoIndex(dir)
+      const { byId, unmatched, collisions } = await buildPhotoIndex(dir, nodeFs)
       expect(byId.size).toBe(0)
       expect(unmatched).toHaveLength(0)
       expect(collisions.size).toBe(0)
@@ -103,8 +104,8 @@ describe('buildPhotoIndex', () => {
 
   it('throws PhotoDirectoryNotFoundError, naming the path, for a directory that does not exist', async () => {
     const missing = join(await mkdtemp(join(tmpdir(), 'photos-test-')), 'does-not-exist')
-    await expect(buildPhotoIndex(missing)).rejects.toBeInstanceOf(PhotoDirectoryNotFoundError)
-    await expect(buildPhotoIndex(missing)).rejects.toThrow(missing)
+    await expect(buildPhotoIndex(missing, nodeFs)).rejects.toBeInstanceOf(PhotoDirectoryNotFoundError)
+    await expect(buildPhotoIndex(missing, nodeFs)).rejects.toThrow(missing)
   })
 })
 

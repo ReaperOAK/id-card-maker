@@ -1,18 +1,18 @@
-import { readFile } from 'node:fs/promises'
 import fontkit from '@pdf-lib/fontkit'
 import type { PDFDocument, PDFFont } from 'pdf-lib'
+import type { FileSystem } from './io.js'
 
 /** Loads font files once per document and hands out embedded pdf-lib fonts by id. */
 export class FontRegistry {
   private constructor(private readonly fonts: Map<string, PDFFont>) {}
 
-  static async load(ids: Record<string, string>, doc: PDFDocument): Promise<FontRegistry> {
+  static async load(ids: Record<string, string>, doc: PDFDocument, fs: FileSystem): Promise<FontRegistry> {
     doc.registerFontkit(fontkit)
     const fonts = new Map<string, PDFFont>()
     for (const [id, path] of Object.entries(ids)) {
-      let bytes: Buffer
+      let bytes: Uint8Array
       try {
-        bytes = await readFile(path)
+        bytes = await fs.readFile(path)
       } catch {
         throw new Error(`Font "${id}" not found at ${path}. Overlay text cannot be embedded without the font file.`)
       }

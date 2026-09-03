@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import { loadRows } from './data.js'
 import type { FlipAxis } from './impose.js'
 import { parseLayout } from './layout.js'
+import { nodeFs } from './node-io.js'
+import { dirname, joinPath, resolvePath } from './paths.js'
 import { buildPhotoIndex, PhotoDirectoryNotFoundError, type PhotoIndex } from './photos.js'
 import { renderJob } from './render-job.js'
 import { summarise } from './preflight.js'
@@ -34,7 +35,7 @@ program
   .requiredOption('-t, --template <path>')
   .option('--dpi <n>', 'detection resolution', '300')
   .action(async (opts: { template: string; dpi: string }) => {
-    const rect = await detectTrim(new Uint8Array(await readFile(opts.template)), { dpi: Number(opts.dpi) })
+    const rect = await detectTrim(await nodeFs.readFile(opts.template), { dpi: Number(opts.dpi) })
     console.log(JSON.stringify(rect, null, 2))
     console.log(`= ${(rect.w / 72).toFixed(4)} x ${(rect.h / 72).toFixed(4)} in`)
   })
@@ -51,22 +52,25 @@ program
   .option('--force', 'generate even when preflight reports blocking issues', false)
   .action(async (opts: { layout: string; data: string; photos?: string; out: string; name?: string; flip: string; force: boolean }) => {
     const flipAxis = parseFlipAxis(opts.flip)
+    // `resolve` turns the user's CLI argument into an absolute path — that is
+    // genuinely OS-specific (drive letters, cwd) and stays on node:path.
     const layoutPath = resolve(opts.layout)
-    const parsedLayout = parseLayout(JSON.parse(await readFile(layoutPath, 'utf8')))
+    const layoutJson = new TextDecoder().decode(await nodeFs.readFile(layoutPath))
+    const parsedLayout = parseLayout(JSON.parse(layoutJson))
     const base = dirname(layoutPath)
 
     // Font paths must resolve against the layout file's own directory, exactly
     // like templateFront/templateBack below — a project is a self-contained
     // folder that can be copied to a pendrive, and that only holds if every
-    // relative path in the layout is read the same way. `resolve` leaves an
+    // relative path in the layout is read the same way. `resolvePath` leaves an
     // already-absolute path (e.g. the fixture's /usr/share/fonts/... entries)
     // untouched.
     const layout = {
       ...parsedLayout,
-      fonts: Object.fromEntries(Object.entries(parsedLayout.fonts).map(([id, p]) => [id, resolve(base, p)])),
+      fonts: Object.fromEntries(Object.entries(parsedLayout.fonts).map(([id, p]) => [id, resolvePath(base, p)])),
     }
 
-    const { rows } = await loadRows(opts.data)
+    const { rows } = await loadRows(opts.data, nodeFs)
     if (rows.length === 0) {
       throw new Error(
         `${opts.data} has no data rows. Nothing to render — check the spreadsheet was exported correctly.`,
@@ -76,7 +80,7 @@ program
     let photoIndex: PhotoIndex
     if (opts.photos) {
       try {
-        photoIndex = await buildPhotoIndex(opts.photos)
+        photoIndex = await buildPhotoIndex(opts.photos, nodeFs)
       } catch (err) {
         if (err instanceof PhotoDirectoryNotFoundError) {
           throw new Error(`--photos "${opts.photos}" does not exist. Check the path and try again.`)
@@ -101,12 +105,13 @@ program
 
     const result = await renderJob({
       layout,
-      templateFront: new Uint8Array(await readFile(resolve(base, layout.templateFront))),
-      templateBack: layout.templateBack ? new Uint8Array(await readFile(resolve(base, layout.templateBack))) : null,
+      templateFront: await nodeFs.readFile(resolvePath(base, layout.templateFront)),
+      templateBack: layout.templateBack ? await nodeFs.readFile(resolvePath(base, layout.templateBack)) : null,
       rows,
       photos: photoIndex.byId,
       jobName: opts.name ?? layout.name,
       allowOverrides: opts.force,
+      fs: nodeFs,
       flipAxis,
     })
 
@@ -114,12 +119,12 @@ program
     console.log(`students ${rows.length}  sheets ${result.sheets}  blocking ${counts.blocking}  warnings ${counts.warnings}`)
     for (const [code, n] of counts.byCode) console.log(`  ${code}: ${n}`)
 
-    await mkdir(opts.out, { recursive: true })
-    await writeFile(join(opts.out, 'job-fronts.pdf'), result.frontPdf)
-    console.log(`wrote ${join(opts.out, 'job-fronts.pdf')}`)
+    await nodeFs.mkdir(opts.out)
+    await nodeFs.writeFile(joinPath(opts.out, 'job-fronts.pdf'), result.frontPdf)
+    console.log(`wrote ${joinPath(opts.out, 'job-fronts.pdf')}`)
     if (result.backPdf) {
-      await writeFile(join(opts.out, 'job-backs.pdf'), result.backPdf)
-      console.log(`wrote ${join(opts.out, 'job-backs.pdf')}`)
+      await nodeFs.writeFile(joinPath(opts.out, 'job-backs.pdf'), result.backPdf)
+      console.log(`wrote ${joinPath(opts.out, 'job-backs.pdf')}`)
     }
   })
 
