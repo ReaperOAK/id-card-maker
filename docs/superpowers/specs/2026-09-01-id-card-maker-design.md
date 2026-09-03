@@ -105,6 +105,8 @@ Rejected alternatives: a web app (1000 local photos should not cross a network),
 
 **Photos:** `image` crate plus YuNet face detection via ONNX (`ort`). YuNet is ~100KB, CPU-only, ships inside the application. No Python, no OpenCV install, no network access.
 
+**The engine runs inside the webview.** pdf-lib and MuPDF (WASM) are browser-safe, so the same TypeScript engine that backs the CLI runs in the Tauri webview unchanged — except for Node-specific I/O (reading fonts, templates and photos; listing the photo directory; parsing the spreadsheet from a path). Those sit behind a small I/O interface, implemented by Node for the CLI and by Tauri's filesystem plugin for the desktop app. This is the first task of the desktop plan, not an afterthought: the engine is the tested part, and forking it for the app would fork the tests.
+
 **Storage: a project is a folder on disk.**
 
 ```
@@ -123,19 +125,34 @@ One app-level `library.json` records each school's template path, field mapping,
 
 ## 6. Template editor and layout model
 
-The template PDF is rasterized once with pdf.js as a **screen backdrop only**. All output uses the original vector page. The preview raster must never enter the output path.
+**One file in: the template PDF.** The editor rasterizes it once with MuPDF as a **screen backdrop only**; output always stamps the original vector page. The preview raster must never enter the output path. The operator does not export a PNG — that would flatten the logo rim text and the signature into pixels for no gain — and does not edit the template in CorelDRAW to remove placeholders (see *Covering existing artwork*).
+
+**Two kinds of field, two gestures.**
+
+- **Photo: draw a box.** A two-dimensional region with no typography. Drag to place, resize to size.
+- **Text: type a marker.** Pick font, size and colour in the properties panel, click on the card, type a run of `x` — `xxxxxxxxxxxx` — and assign it to a spreadsheet column. The marker's position and rendered width become the field's box; its font and size become the field's style. The x's themselves never render; they exist only at authoring time.
+
+This mirrors how the operator already reasons about capacity ("Name gets 25 characters") and reproduces the placeholder convention in their existing CorelDRAW template, so nothing new has to be learned. It also removes a whole class of defect: the 2.05pt baseline error found during the render-core plan arose from measuring the layout in one font and drawing in another. A marker typed in the actual overlay font at the actual size fixes the baseline at authoring time.
+
+**Colour is a field property**, chosen in the panel. The marker renders in a neutral editing colour and has no say in output.
+
+**Alignment** is a per-field control — left, centre, right. A marker pins only the left edge, and several of the reference card's values sit centred in their slots.
+
+**Multi-line fields.** Type one marker per line and assign them to the same field. The editor derives `firstLineIndent` from the horizontal offset between the runs. The reference address is the canonical case: a short run after "Address :" and a full-width run at the left margin on the next line.
+
+**Covering existing artwork.** The operator's template already carries their own placeholder x's, and those print unless something hides them. A per-field **cover** toggle paints the field's box with the background colour — sampled from the template immediately beside the box — before the value is drawn, so the old placeholder vanishes without the template ever being edited. It works on a flat background; the reference card body is plain white. On a gradient or pattern it leaves a visible patch, and deleting the placeholder in CorelDRAW is the better answer there. The editor shows the sampled colour so a bad sample is caught before a sheet is printed, not after.
 
 ```
 +--------------+----------------------------+--------------+
 |  Fields      |                            |  Properties  |
 |              |    +------------------+    |              |
-| [ ] name     |    |   photo frame    |    | Bind: Name   |
+| [ ] name     |    |  [photo  box]    |    | Bind: Name   |
 | [ ] roll     |    |                  |    | Font: Arial  |
-| [ ] class    |    |  [ name ]        |    | Size: 9pt    |
-| [ ] father   |    |  [ roll ]        |    | Align: ctr   |
-| [x] photo    |    +------------------+    | Fit: shrink  |
-|              |      card @ actual size    | Case: UPPER  |
-| + add field  |                            |              |
+| [ ] class    |    |  xxxxxxxxxxxx    |    | Size: 9pt    |
+| [ ] guardian |    |  xxx   xxx       |    | Colour: red  |
+| [x] photo    |    +------------------+    | Align: left  |
+|              |      card @ actual size    | Overflow:    |
+| + add field  |                            |  abbreviate  |
 +--------------+----------------------------+--------------+
         < Front | Back >       preview with: [ Rahul K. ]
 ```
@@ -160,15 +177,17 @@ type Binding = {
 }
 
 type TextStyle = {
-  fontFile: string
+  fontId: string            // key into the layout's fonts map
   size: number
-  color: Colour          // device colour, see 8.4
+  color: Colour             // device colour, see 8.4
   align: 'left' | 'center' | 'right'
   valign: 'top' | 'middle' | 'bottom'
   fit: 'shrink' | 'clip' | 'wrap'
+  overflow: 'shrink' | 'abbreviate-then-shrink'   // see the ladder below
   minSize: number
   lineHeight: number
   firstLineIndent: number   // points; 0 for most fields
+  cover?: boolean           // desktop plan: paint the sampled background before drawing
 }
 
 type Colour =
@@ -177,7 +196,14 @@ type Colour =
   | { space: 'gray'; k: number }
 ```
 
-**`fit: 'shrink'` is a correctness feature, not a convenience.** "Om Jha" and "Lakshmi Priyadarshini Venkataraghavan" occupy the same box. Behaviour: shrink toward `minSize` to fit the box width; below that, wrap; if it still does not fit, **fail the card into preflight**. Silent overflow on card 700 of 1000 is discovered only after cutting.
+**Overflow handling is a correctness feature, not a convenience.** "Om Jha" and "Lakshmi Priyadarshini Venkataraghavan" occupy the same box. Two policies:
+
+- `overflow: 'shrink'` — shrink toward `minSize`; wrap within `maxLines`; if it still does not fit, **fail the card into preflight**. Silent overflow on card 700 of 1000 is discovered only after cutting.
+- `overflow: 'abbreviate-then-shrink'` — for personal-name fields. Reduce middle names to initials **one at a time, left to right**, re-testing after each, with the first and last name always intact; only when abbreviation is exhausted, shrink; then fail. Shrinking is the last resort because a name at 6pt beside twenty-four cards at 9pt looks like a mail merge, not a printed product. Preflight reports every name it altered (`text-abbreviated`, warn): a student's name changing on their own card must never be silent.
+
+Abbreviation is opt-in per field. It is right for Name and Guardian's Name, wrong for Address (`12 P. Street`), and meaningless for Class or Blood Group. It splits on whitespace, so a compound surname written with spaces would lose its middle particles — rare in this market, real elsewhere.
+
+Known limit: a name with a single middle token and two long survivors still shrinks after abbreviation. The reference `LAKSHMI PRIYADARSHINI VENKATARAGHAVAN` becomes `LAKSHMI P. VENKATARAGHAVAN` and still needs 6.75pt in the 112.5pt Name box. Only widening the field keeps that name intact at full size.
 
 **`firstLineIndent` exists for wrapped fields that begin beside their label.** In the reference template the address runs two lines: line one starts after "Address :" at x=63.37, line two returns to the left margin at x=26.77. This is one text box of width 162.59 with a 36.60pt first-line indent, not two hand-split fields. Splitting it manually would push the wrap decision onto the operator for every student.
 
@@ -213,7 +239,7 @@ Clamped to image bounds. If the head cannot be framed without running out of pix
 
 **DPI thresholds are calibrated to real production, not to the 300dpi ideal.** The reference template's photo frame is 0.664 x 0.869 inches and its embedded photo is 132x172px, an effective 199ppi. A flat 300dpi gate would flag every photo currently in use and train the operator to ignore the warning, which is worse than having no gate.
 
-Rules: warn below 300dpi, block below 150dpi, with the target DPI a per-template setting defaulting to 200. A warning nobody can act on is noise, and noise is what makes real warnings invisible.
+Rules: warn below the template's target DPI (a per-template setting defaulting to 200), block below 150dpi. Warning below a fixed 300 would flag every photo in the reference library. A warning nobody can act on is noise, and noise is what makes real warnings invisible.
 
 **7.6 Review contact sheet.** Every crop shown in a grid, flagged items sorted first. Drag to re-centre, scroll to zoom. The pipeline's purpose is to make 950 crops correct so the operator only touches 50; it is not to remove human review.
 

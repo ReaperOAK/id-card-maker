@@ -26,7 +26,7 @@ This plan deliberately does no image processing. Photos are embedded as-is and f
 - Sheet size fixed at **18 x 12 in = 1296 x 864 pt**.
 - Margins on a sheet are **always symmetric**. A grid result with unequal left/right or top/bottom margins is a bug, not a preference.
 - Default gutter **3mm**; default bleed **0** (the operator cuts on the border, spec 8.3).
-- Photo target DPI defaults to **200**; warn below 300, block below 150 (spec 7.5).
+- Photo target DPI defaults to **200**; warn below the template target, block below 150 (spec 7.5).
 - Colours carry their space (`rgb` | `cmyk` | `gray`). Never store hex. Pure-black text in a CMYK template draws K-only (spec 8.4).
 - Test fonts are Liberation Sans and Liberation Serif at `/usr/share/fonts/truetype/liberation/`. These are metric-identical to Arial and Times New Roman, so measurements match the reference template exactly.
 - **Engine choice supersedes spec 4.2's mention of pdf.js.** MuPDF is used instead: one WASM dependency serves both rasterization and text extraction, with no native build step on Windows. The spec's actual requirement — never hand-parse a content stream — is preserved.
@@ -765,6 +765,9 @@ export interface Row {
  * Photo filenames and spreadsheet ids drift apart in predictable ways:
  * case, punctuation, and Excel eating leading zeros. Normalise all three away.
  */
+// EXECUTION NOTE: this reference body could not satisfy its own 'ADM/007' -> 'adm7'
+// case (the ^0+ anchor never reaches zeros after a letter). The committed
+// implementation strips leading zeros per digit run: replace(/(^|[a-z])0+(\d)/g, '$1$2').
 export function normaliseId(raw: string): string {
   const cleaned = raw.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
   const stripped = cleaned.replace(/^0+/, '')
