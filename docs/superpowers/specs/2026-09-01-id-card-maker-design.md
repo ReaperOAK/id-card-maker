@@ -187,7 +187,7 @@ type TextStyle = {
   minSize: number
   lineHeight: number
   firstLineIndent: number   // points; 0 for most fields
-  cover?: boolean           // desktop plan: paint the sampled background before drawing
+  cover?: Colour            // desktop plan: paint this (sampled beside the box) before drawing
 }
 
 type Colour =
